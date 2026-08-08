@@ -1,0 +1,18 @@
+# The following five lines of boilerplate have to be in your project's
+# CMakeLists in this exact order for cmake to work correctly
+cmake_minimum_required(VERSION 3.16)
+
+set(
+  EXTRA_COMPONENT_DIRS
+    "/home/ifacello/containers/jazzyDesktop/esp_components"
+)
+
+if(DEFINED ENV{MICROROS_NAMESPACE})
+    add_compile_definitions(MICROROS_NAMESPACE="$ENV{MICROROS_NAMESPACE}")
+else()
+    add_compile_definitions(MICROROS_NAMESPACE="")
+endif()
+
+
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(main)

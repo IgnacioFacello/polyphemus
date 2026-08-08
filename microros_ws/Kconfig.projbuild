@@ -1,0 +1,7 @@
+menu "Micro-ROS Configuration"
+    config MICROROS_NAMESPACE
+        string "micro-ROS node namespace"
+        default ""
+        help
+            Namespace prepended to the node/topic names.
+endmenu
