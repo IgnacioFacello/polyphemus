@@ -1,0 +1,7 @@
+build/
+install/
+log/
+sdkconfig*
+dependencies.lock
+.cache
+components
