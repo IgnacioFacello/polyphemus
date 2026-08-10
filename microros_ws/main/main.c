@@ -40,6 +40,10 @@
     #define DOMAIN_ID 0
 #endif
 
+#define ENCODER_PPR 600
+#define TIMER_PERIOD_MS 400
+
+
 static const char *TAG = "micro_ros";
 
 static rcl_publisher_t encoder_publisher;
@@ -47,19 +51,41 @@ std_msgs__msg__Int32 pub_msg;
 
 encoder_config_t enc_cfg = ENCODER_DEFAULT_CONFIG(12, 14);
 encoder_handle_t enc;
-
+static int previous_count = 0;
 /* ── Callbacks micro-ROS ────────────────────────────────────── */
 
+
+// Función para calcular RPM
+float calculate_rpm(int current_count, int previous_count)
+{
+    int delta_ticks = current_count - previous_count;
+    float time_sec = TIMER_PERIOD_MS / 1000.0;  // 0.4 segundos
+    float rpm = (delta_ticks / (float)ENCODER_PPR) / time_sec * 60.0;
+    return rpm;
+}
+
+// Ahora en el timer callback
 void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 {
-    int count = 0;
+    int current_count = 0;
     (void) last_call_time;
     if (timer == NULL)
         return;
-    RCSOFTCHECK(encoder_get_count(enc, &count))
-    pub_msg.data = count;
-    ESP_LOGI(TAG, "Publishing encoder reading: %d count", (int)pub_msg.data);
-    RCSOFTCHECK(rcl_publish(&encoder_publisher, &pub_msg, NULL))
+    
+    RCSOFTCHECK(encoder_get_count(enc, &current_count));
+    
+    // Calcular RPM
+    float rpm = calculate_rpm(current_count, previous_count);
+    
+    // Log para ver ambos datos
+    ESP_LOGI(TAG, "Position: %d ticks | RPM: %.2f", current_count, rpm);
+    
+    // Publicar (por ahora solo la posición, si quieres publicar RPM cambias aquí)
+    pub_msg.data = (int32_t)rpm;
+    RCSOFTCHECK(rcl_publish(&encoder_publisher, &pub_msg, NULL));
+    
+    // Guardar para la próxima lectura
+    previous_count = current_count;
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
