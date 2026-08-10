@@ -2,7 +2,6 @@
  * encoder.c — Quadrature encoder driver built on the ESP-IDF PCNT peripheral.
  */
 #include <stdlib.h>
-#include <string.h>
 #include "encoder.h"
 #include "driver/pulse_cnt.h"
 #include "freertos/FreeRTOS.h"
@@ -14,41 +13,9 @@ static const char *TAG = "encoder";
 
 struct encoder_dev_t {
     pcnt_unit_handle_t    unit;
-    pcnt_channel_handle_t chan_a;
-    pcnt_channel_handle_t chan_b;
-
-    /* Optional event machinery — only allocated if watch points are used. */
-    QueueHandle_t      evt_queue;
-    TaskHandle_t        evt_task;
-    encoder_event_cb_t  evt_cb;
-    void               *evt_ctx;
+    pcnt_channel_handle_t chan_one;
+    pcnt_channel_handle_t chan_two;
 };
-
-static bool pcnt_on_reach_isr(pcnt_unit_handle_t unit,
-                               const pcnt_watch_event_data_t *edata,
-                               void *user_ctx)
-{
-    BaseType_t high_task_wakeup = pdFALSE;
-    struct encoder_dev_t *dev = (struct encoder_dev_t *)user_ctx;
-    xQueueSendFromISR(dev->evt_queue, &(edata->watch_point_value), &high_task_wakeup);
-    return (high_task_wakeup == pdTRUE);
-}
-
-/* Library-owned task: blocks on the queue so user callbacks never run in
- * ISR context. */
-static void encoder_event_task(void *arg)
-{
-    struct encoder_dev_t *dev = (struct encoder_dev_t *)arg;
-    int watch_point_value;
-
-    while (1) {
-        if (xQueueReceive(dev->evt_queue, &watch_point_value, portMAX_DELAY)) {
-            if (dev->evt_cb) {
-                dev->evt_cb(watch_point_value, dev->evt_ctx);
-            }
-        }
-    }
-}
 
 esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle, encoder_event_cb_t cb)
 {
@@ -104,6 +71,7 @@ esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_han
         goto fail_channels;
     }
 
+    // Configuración de los canales
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_a,
                         PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_a,
@@ -113,47 +81,7 @@ esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_han
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_b,
                         PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
 
-    // set watchpoints
-    int watch_points[] = {
-        config->pcnt_low_limit, -50, 0,
-        50, config->pcnt_high_limit
-    };
-    int num_points = 5;
-
-    for (size_t i = 0; i < num_points; i++) {
-        ret = pcnt_unit_add_watch_point(dev->unit, watch_points[i]);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to register watch point: %d - %s", watch_points[i], esp_err_to_name(ret));
-            return ret;
-        }
-    }
-
-    dev->evt_cb  = cb;
-    dev->evt_queue = xQueueCreate(10, sizeof(int));
-    if (!dev->evt_queue) {
-        return ESP_ERR_NO_MEM;
-    }
-
-    pcnt_event_callbacks_t cbs = {
-        .on_reach = pcnt_on_reach_isr,
-    };
-    ret = pcnt_unit_register_event_callbacks(dev->unit, &cbs, dev);
-    if (ret != ESP_OK) {
-        vQueueDelete(dev->evt_queue);
-        dev->evt_queue = NULL;
-        ESP_LOGE(TAG, "Failed to register event callbacks: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    BaseType_t task_ret = xTaskCreate(encoder_event_task, "encoder_evt",
-                                       2048, dev, tskIDLE_PRIORITY + 2,
-                                       &dev->evt_task);
-    if (task_ret != pdPASS) {
-        vQueueDelete(dev->evt_queue);
-        dev->evt_queue = NULL;
-        return ESP_ERR_NO_MEM;
-    }
-
+    // Activación de la unidad
     ESP_ERROR_CHECK(pcnt_unit_enable(dev->unit));
     ESP_ERROR_CHECK(pcnt_unit_clear_count(dev->unit));
     ESP_ERROR_CHECK(pcnt_unit_start(dev->unit));
@@ -167,57 +95,6 @@ fail_unit:
     free(dev);
     ESP_LOGE(TAG, "encoder_init failed: %s", esp_err_to_name(ret));
     return ret;
-}
-
-esp_err_t encoder_register_watchpoints(encoder_handle_t handle,
-                                        const int *watch_points,
-                                        size_t num_points,
-                                        encoder_event_cb_t cb,
-                                        void *user_ctx)
-{
-    if (!handle || (num_points > 0 && !watch_points)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (num_points == 0) {
-        return ESP_OK; /* nothing to do */
-    }
-
-    for (size_t i = 0; i < num_points; i++) {
-        esp_err_t ret = pcnt_unit_add_watch_point(handle->unit, watch_points[i]);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to register watch point: %d - %s", watch_points[i], esp_err_to_name(ret));
-            return ret;
-        }
-    }
-
-    handle->evt_cb  = cb;
-    handle->evt_ctx = user_ctx;
-    handle->evt_queue = xQueueCreate(10, sizeof(int));
-    if (!handle->evt_queue) {
-        return ESP_ERR_NO_MEM;
-    }
-
-    pcnt_event_callbacks_t cbs = {
-        .on_reach = pcnt_on_reach_isr,
-    };
-    esp_err_t ret = pcnt_unit_register_event_callbacks(handle->unit, &cbs, handle);
-    if (ret != ESP_OK) {
-        vQueueDelete(handle->evt_queue);
-        handle->evt_queue = NULL;
-        ESP_LOGE(TAG, "Failed to register event callbacks: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    BaseType_t task_ret = xTaskCreate(encoder_event_task, "encoder_evt",
-                                       2048, handle, tskIDLE_PRIORITY + 2,
-                                       &handle->evt_task);
-    if (task_ret != pdPASS) {
-        vQueueDelete(handle->evt_queue);
-        handle->evt_queue = NULL;
-        return ESP_ERR_NO_MEM;
-    }
-
-    return ESP_OK;
 }
 
 esp_err_t encoder_get_count(encoder_handle_t handle, int *count)
