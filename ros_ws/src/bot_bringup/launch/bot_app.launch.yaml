@@ -10,5 +10,5 @@ launch:
         namespace: "$(var namespace)"
     - node:
         pkg: "control_service"
-        exec: "display"
-        name: "display_node"
+        exec: "graph"
+        name: "graph_node"

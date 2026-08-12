@@ -11,7 +11,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools', 'pygame'],
+    install_requires=['setuptools', 'pygame', 'matplotlib'],
     zip_safe=True,
     maintainer='ifacello',
     maintainer_email='ignacio.facello@mi.unc.edu.ar',
@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'display = control_service.display_node:main',
+            'graph = control_service.graph_node:main',
         ],
     },
 )
