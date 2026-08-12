@@ -44,7 +44,7 @@
 
 #define ENCODER_GPIO_A 32
 #define ENCODER_GPIO_B 33
-#define ENCODER_PPR 600*4
+#define ENCODER_PPR 600
 #define TIMER_PERIOD_MS 400
 
 static const char *TAG = "micro_ros";
