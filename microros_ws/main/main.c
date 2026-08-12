@@ -252,9 +252,6 @@ void micro_ros_task(void *arg)
     vTaskDelete(NULL);
 }
 
-void on_watchpoint(int value, void *ctx) {
-    ESP_LOGI("main", "crossed watch point: %d", value);
-}
 
 void app_main(void)
 {
@@ -264,7 +261,7 @@ void app_main(void)
 
     ESP_LOGI("main", "pins  : %d, %d", enc_cfg.gpio_a, enc_cfg.gpio_b);
     ESP_LOGI("main", "limits: [%d, %d]", enc_cfg.pcnt_low_limit, enc_cfg.pcnt_high_limit);
-    ESP_ERROR_CHECK(encoder_init(&enc_cfg, &enc, on_watchpoint));
+    ESP_ERROR_CHECK(encoder_init(&enc_cfg, &enc));
 
     xTaskCreate(micro_ros_task, "micro_ros_task",
                 MICRO_ROS_APP_STACK, NULL, MICRO_ROS_APP_TASK_PRIO, NULL);
