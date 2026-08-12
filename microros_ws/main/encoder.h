@@ -33,13 +33,13 @@ typedef struct {
     {                                             \
         .gpio_a = (a_gpio),                       \
         .gpio_b = (b_gpio),                       \
-        .pcnt_high_limit = 100 /* 32767 */,                  \
-        .pcnt_low_limit = -100 /* -32768 */,                  \
+        .pcnt_high_limit = 32767,                  \
+        .pcnt_low_limit = -32768,                  \
         .glitch_filter_ns = 1000,                  \
     }
 
 /* Create and start an encoder instance. */
-esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle, encoder_event_cb_t cb);
+esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle);
 
 /* Stop and free an encoder instance. */
 esp_err_t encoder_deinit(encoder_handle_t handle);
@@ -49,15 +49,6 @@ esp_err_t encoder_get_count(encoder_handle_t handle, int *count);
 
 /* Reset the counter to zero. */
 esp_err_t encoder_clear_count(encoder_handle_t handle);
-
-/* Optional: register watch points (e.g. every N counts) and get a callback
- * on a dedicated task when they're crossed. Pass num_points == 0 to skip
- * this feature entirely (saves a task + queue if you only need polling). */
-esp_err_t encoder_register_watchpoints(encoder_handle_t handle,
-                                        const int *watch_points,
-                                        size_t num_points,
-                                        encoder_event_cb_t cb,
-                                        void *user_ctx);
 
 #ifdef __cplusplus
 }
