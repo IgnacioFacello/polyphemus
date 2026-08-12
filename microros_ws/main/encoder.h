@@ -33,8 +33,8 @@ typedef struct {
     {                                             \
         .gpio_a = (a_gpio),                       \
         .gpio_b = (b_gpio),                       \
-        .pcnt_high_limit = ppr*4,                  \
-        .pcnt_low_limit = -ppr*4,                  \
+        .pcnt_high_limit = ppr,                  \
+        .pcnt_low_limit = -ppr,                  \
         .glitch_filter_ns = 1000,                  \
     }
 

@@ -6,7 +6,7 @@ position and RPM topics published by the ESP32 micro-ROS firmware
 two matplotlib graphs.
 
 Topics (must match main.c):
-    sensor_data  (std_msgs/Int32)    — raw pulse count / position
+    angle_data  (std_msgs/Int32)    — raw pulse count / position
     rpm_data     (std_msgs/Float32)  — computed RPM
 """
 
@@ -22,7 +22,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import Int32, Float32
 
 HISTORY_LEN = 200          # number of points kept on each graph
-POSITION_TOPIC = "sensor_data"
+POSITION_TOPIC = "angle_data"
 RPM_TOPIC = "rpm_data"
 
 

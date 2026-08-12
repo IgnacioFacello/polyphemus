@@ -15,7 +15,6 @@
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
-#include <std_msgs/msg/int32.h>
 #include <std_msgs/msg/float32.h>
 #include <geometry_msgs/msg/twist.h>
 #include <rclc/rclc.h>
@@ -49,52 +48,58 @@
 
 static const char *TAG = "micro_ros";
 
-static rcl_publisher_t encoder_publisher;
-std_msgs__msg__Int32 pub_msg;
+static rcl_publisher_t angle_publisher;
+std_msgs__msg__Float32 angle_msg;
 
 static rcl_publisher_t rpm_publisher;
 std_msgs__msg__Float32 rpm_msg;
 
-encoder_config_t enc_cfg = ENCODER_DEFAULT_CONFIG(ENCODER_GPIO_A, ENCODER_GPIO_B, ENCODER_PPR);
+encoder_config_t enc_cfg = ENCODER_DEFAULT_CONFIG(ENCODER_GPIO_A, ENCODER_GPIO_B, ENCODER_PPR*4);
 encoder_handle_t enc;
-static int previous_count = 0;
+static float previous_angle = 0.0;
 /* ── Callbacks micro-ROS ────────────────────────────────────── */
 
 
 // Función para calcular RPM
-float calculate_rpm(int current_count, int previous_count)
+float calculate_rpm(float current_angle, float previous_angle)
 {
-    int delta_ticks = current_count - previous_count;
+    float delta_angle = current_angle - previous_angle;
     float time_sec = TIMER_PERIOD_MS / 1000.0;  // 0.4 segundos
-    float rpm = (delta_ticks / (float)ENCODER_PPR*4) / time_sec * 60.0;
+    float rpm = delta_angle / (time_sec * 60.0);
     return rpm;
+}
+
+float calculate_angle(int count){
+    float deg_per_pulse = 360.0 / ((float)ENCODER_PPR*4);
+    return (float)count * deg_per_pulse;
 }
 
 // Ahora en el timer callback
 void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 {
-    int current_count = 0;
+    int count = 0;
     (void) last_call_time;
     if (timer == NULL)
         return;
 
-    RCSOFTCHECK(encoder_get_count(enc, &current_count));
+    RCSOFTCHECK(encoder_get_count(enc, &count));
 
     // Calcular RPM
-    float rpm = calculate_rpm(current_count, previous_count);
+    float angle = calculate_angle(count);
+    float rpm = calculate_rpm(angle, previous_angle);
 
     // Log para ver ambos datos
-    ESP_LOGI(TAG, "Position: %d ticks | RPM: %.2f", current_count, rpm);
+    ESP_LOGI(TAG, "Position: %.2f deg | RPM: %.2f deg/s", angle, rpm);
 
-    // Publicar (por ahora solo la posición, si quieres publicar RPM cambias aquí)
-    pub_msg.data = current_count;
-    RCSOFTCHECK(rcl_publish(&encoder_publisher, &pub_msg, NULL));
+    // Publicar
+    angle_msg.data = angle;
+    RCSOFTCHECK(rcl_publish(&angle_publisher, &angle_msg, NULL));
 
     rpm_msg.data = rpm;
     RCSOFTCHECK(rcl_publish(&rpm_publisher, &rpm_msg, NULL));
 
     // Guardar para la próxima lectura
-    previous_count = current_count;
+    previous_angle = angle;
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
@@ -176,12 +181,12 @@ void micro_ros_task(void *arg)
 
     // Inicialización del publicador
     rc = rclc_publisher_init_default(
-        &encoder_publisher,
+        &angle_publisher,
         &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-        "sensor_data");
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+        "angle_data");
     if (rc != RCL_RET_OK) {
-        ESP_LOGE(TAG, "Failed to init encoder_publisher: %d", rc);
+        ESP_LOGE(TAG, "Failed to init angle_publisher: %d", rc);
         vTaskDelete(NULL);
         return;
     }
@@ -246,7 +251,7 @@ void micro_ros_task(void *arg)
         usleep(10000);
     }
 
-    RCCHECK(rcl_publisher_fini(&encoder_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&angle_publisher, &node));
     RCCHECK(rcl_node_fini(&node));
     encoder_deinit(enc);
     vTaskDelete(NULL);
