@@ -42,9 +42,10 @@
     #define DOMAIN_ID 0
 #endif
 
+#define ENCODER_GPIO_A 32
+#define ENCODER_GPIO_B 33
 #define ENCODER_PPR 600
 #define TIMER_PERIOD_MS 400
-
 
 static const char *TAG = "micro_ros";
 
@@ -54,7 +55,7 @@ std_msgs__msg__Int32 pub_msg;
 static rcl_publisher_t rpm_publisher;
 std_msgs__msg__Float32 rpm_msg;
 
-encoder_config_t enc_cfg = ENCODER_DEFAULT_CONFIG(12, 14);
+encoder_config_t enc_cfg = ENCODER_DEFAULT_CONFIG(ENCODER_GPIO_A, ENCODER_GPIO_B);
 encoder_handle_t enc;
 static int previous_count = 0;
 /* ── Callbacks micro-ROS ────────────────────────────────────── */
