@@ -16,9 +16,11 @@
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
 #include <std_msgs/msg/int32.h>
+#include <std_msgs/msg/float32.h>
 #include <geometry_msgs/msg/twist.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
+
 
 #include <custom_interfaces/srv/motor.h>
 #include <custom_interfaces/msg/motor_rpm.h>
@@ -49,6 +51,9 @@ static const char *TAG = "micro_ros";
 static rcl_publisher_t encoder_publisher;
 std_msgs__msg__Int32 pub_msg;
 
+static rcl_publisher_t rpm_publisher;
+std_msgs__msg__Float32 rpm_msg;
+
 encoder_config_t enc_cfg = ENCODER_DEFAULT_CONFIG(12, 14);
 encoder_handle_t enc;
 static int previous_count = 0;
@@ -60,7 +65,7 @@ float calculate_rpm(int current_count, int previous_count)
 {
     int delta_ticks = current_count - previous_count;
     float time_sec = TIMER_PERIOD_MS / 1000.0;  // 0.4 segundos
-    float rpm = (delta_ticks / (float)ENCODER_PPR) / time_sec * 60.0;
+    float rpm = (delta_ticks / (float)ENCODER_PPR*4) / time_sec * 60.0;
     return rpm;
 }
 
@@ -81,8 +86,11 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     ESP_LOGI(TAG, "Position: %d ticks | RPM: %.2f", current_count, rpm);
     
     // Publicar (por ahora solo la posición, si quieres publicar RPM cambias aquí)
-    pub_msg.data = (int32_t)rpm;
+    pub_msg.data = current_count;
     RCSOFTCHECK(rcl_publish(&encoder_publisher, &pub_msg, NULL));
+
+    rpm_msg.data = rpm;
+    RCSOFTCHECK(rcl_publish(&rpm_publisher, &rpm_msg, NULL));
     
     // Guardar para la próxima lectura
     previous_count = current_count;
@@ -176,6 +184,18 @@ void micro_ros_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
+
+    rc = rclc_publisher_init_default(
+        &rpm_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+        "rpm_data");
+    if (rc != RCL_RET_OK) {
+        ESP_LOGE(TAG, "Failed to init rpm_publisher: %d", rc);
+        vTaskDelete(NULL);
+        return;
+    }
+
 
     // Inicialización del Timer
     rcl_timer_t timer = rcl_get_zero_initialized_timer();
