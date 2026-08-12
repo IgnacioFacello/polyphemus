@@ -29,12 +29,12 @@ typedef struct {
 } encoder_config_t;
 
 /* Sensible defaults: +/-32767 range, 1us glitch filter. */
-#define ENCODER_DEFAULT_CONFIG(a_gpio, b_gpio)   \
+#define ENCODER_DEFAULT_CONFIG(a_gpio, b_gpio, ppr)   \
     {                                             \
         .gpio_a = (a_gpio),                       \
         .gpio_b = (b_gpio),                       \
-        .pcnt_high_limit = 32767,                  \
-        .pcnt_low_limit = -32768,                  \
+        .pcnt_high_limit = ppr*4,                  \
+        .pcnt_low_limit = -ppr*4,                  \
         .glitch_filter_ns = 1000,                  \
     }
 
