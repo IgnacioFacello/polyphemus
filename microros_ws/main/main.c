@@ -266,6 +266,8 @@ void app_main(void)
 
     ESP_LOGI("main", "pins  : %d, %d", enc_cfg.gpio_a, enc_cfg.gpio_b);
     ESP_LOGI("main", "limits: [%d, %d]", enc_cfg.pcnt_low_limit, enc_cfg.pcnt_high_limit);
+    ESP_ERROR_CHECK(gpio_set_pull_mode(ENCODER_GPIO_A, GPIO_PULLUP_ONLY));
+    ESP_ERROR_CHECK(gpio_set_pull_mode(ENCODER_GPIO_B, GPIO_PULLUP_ONLY));
     ESP_ERROR_CHECK(encoder_init(&enc_cfg, &enc));
 
     xTaskCreate(micro_ros_task, "micro_ros_task",
