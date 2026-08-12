@@ -44,7 +44,7 @@
 
 #define ENCODER_GPIO_A 32
 #define ENCODER_GPIO_B 33
-#define ENCODER_PPR 600
+#define ENCODER_PPR 600*4
 #define TIMER_PERIOD_MS 400
 
 static const char *TAG = "micro_ros";
@@ -77,22 +77,22 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     (void) last_call_time;
     if (timer == NULL)
         return;
-    
+
     RCSOFTCHECK(encoder_get_count(enc, &current_count));
-    
+
     // Calcular RPM
     float rpm = calculate_rpm(current_count, previous_count);
-    
+
     // Log para ver ambos datos
     ESP_LOGI(TAG, "Position: %d ticks | RPM: %.2f", current_count, rpm);
-    
+
     // Publicar (por ahora solo la posición, si quieres publicar RPM cambias aquí)
     pub_msg.data = current_count;
     RCSOFTCHECK(rcl_publish(&encoder_publisher, &pub_msg, NULL));
 
     rpm_msg.data = rpm;
     RCSOFTCHECK(rcl_publish(&rpm_publisher, &rpm_msg, NULL));
-    
+
     // Guardar para la próxima lectura
     previous_count = current_count;
 }
@@ -203,7 +203,7 @@ void micro_ros_task(void *arg)
     rc = rclc_timer_init_default2(
         &timer,
         &support,
-        RCL_MS_TO_NS(400),
+        RCL_MS_TO_NS(TIMER_PERIOD_MS),
         timer_callback,
         true);
     if (rc != RCL_RET_OK) {
