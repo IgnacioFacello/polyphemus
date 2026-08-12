@@ -39,7 +39,7 @@ typedef struct {
     }
 
 /* Create and start an encoder instance. */
-esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle, encoder_event_cb_t cb);
+esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle);
 
 /* Stop and free an encoder instance. */
 esp_err_t encoder_deinit(encoder_handle_t handle);

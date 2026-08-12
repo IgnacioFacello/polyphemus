@@ -17,7 +17,7 @@ struct encoder_dev_t {
     pcnt_channel_handle_t chan_two;
 };
 
-esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle, encoder_event_cb_t cb)
+esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle)
 {
     // Verifica correctitud de los argumentos
     if (!config || !out_handle) {
@@ -53,32 +53,32 @@ esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_han
     }
 
     // Creación de los canales
-    pcnt_chan_config_t chan_a_config = {
+    pcnt_chan_config_t chan_one_config = {
         .edge_gpio_num  = config->gpio_a,
         .level_gpio_num = config->gpio_b,
     };
-    ret = pcnt_new_channel(dev->unit, &chan_a_config, &dev->chan_a);
+    ret = pcnt_new_channel(dev->unit, &chan_one_config, &dev->chan_one);
     if (ret != ESP_OK) {
         goto fail_channels;
     }
 
-    pcnt_chan_config_t chan_b_config = {
+    pcnt_chan_config_t chan_two_config = {
         .edge_gpio_num  = config->gpio_b,
         .level_gpio_num = config->gpio_a,
     };
-    ret = pcnt_new_channel(dev->unit, &chan_b_config, &dev->chan_b);
+    ret = pcnt_new_channel(dev->unit, &chan_two_config, &dev->chan_two);
     if (ret != ESP_OK) {
         goto fail_channels;
     }
 
     // Configuración de los canales
-    ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_a,
+    ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_one,
                         PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
-    ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_a,
+    ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_one,
                         PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
-    ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_b,
+    ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_two,
                         PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_DECREASE));
-    ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_b,
+    ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_two,
                         PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
 
     // Activación de la unidad
@@ -119,16 +119,9 @@ esp_err_t encoder_deinit(encoder_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (handle->evt_task) {
-        vTaskDelete(handle->evt_task);
-    }
-    if (handle->evt_queue) {
-        vQueueDelete(handle->evt_queue);
-    }
-
     pcnt_unit_disable(handle->unit);
-    pcnt_del_channel(handle->chan_a);
-    pcnt_del_channel(handle->chan_b);
+    pcnt_del_channel(handle->chan_one);
+    pcnt_del_channel(handle->chan_two);
     pcnt_del_unit(handle->unit);
 
     free(handle);
