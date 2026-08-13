@@ -63,9 +63,14 @@ static float previous_angle = 0.0;
 // Función para calcular RPM
 float calculate_rpm(float current_angle, float previous_angle)
 {
-    float delta_angle = current_angle - previous_angle;
-    float time_sec = TIMER_PERIOD_MS / 1000.0;  // 0.4 segundos
-    float rpm = delta_angle / (time_sec * 60.0);
+    float delta_angle = current_angle - previous_angle; // Diferencia en grados
+    float time_sec = TIMER_PERIOD_MS / 1000.0;          // Tiempo transcurrido (0.4 s)
+    
+    // 1. delta_angle / 360.0 -> Convierte los grados a VUELTAS
+    // 2. / time_sec         ->  cantidad de vueltas por SEGUNDO
+    // 3. * 60.0             -> Multiplica por 60 para pasarlo a MINUTOS (RPM)
+    float rpm = (delta_angle / 360.0) / time_sec * 60.0; 
+    
     return rpm;
 }
 
@@ -89,7 +94,7 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     float rpm = calculate_rpm(angle, previous_angle);
 
     // Log para ver ambos datos
-    ESP_LOGI(TAG, "Position: %.2f deg | RPM: %.2f deg/s", angle, rpm);
+    ESP_LOGI(TAG, "Position: %.2f deg | RPM: %.2f rpm", angle, rpm);
 
     // Publicar
     angle_msg.data = angle;
