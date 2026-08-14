@@ -64,13 +64,13 @@ static int64_t previous_count = 0;
 // Función para calcular RPM
 float calculate_rpm(int64_t current, int64_t previous)
 {
-    float delta_ticks = current - previous;     // Diferencia en ticks
-    float time_sec = TIMER_PERIOD_MS / 1000.0;  // Tiempo transcurrido en segundos
+    float delta_ticks = (float)(current - previous);     // Diferencia en ticks
+    float time_sec = (float)TIMER_PERIOD_MS / 1000.0;  // Tiempo transcurrido en segundos
 
     // 1. delta_angle / 360.0 -> Convierte los grados a VUELTAS
     // 2. / time_sec         ->  cantidad de vueltas por SEGUNDO
     // 3. * 60.0             -> Multiplica por 60 para pasarlo a MINUTOS (RPM)
-    float rpm = (delta_ticks / ENCODER_PPR*4) / time_sec * 60.0;
+    float rpm = (delta_ticks / (float)(ENCODER_PPR*4)) / time_sec * 60.0;
 
     return rpm;
 }
