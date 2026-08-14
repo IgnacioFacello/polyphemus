@@ -28,7 +28,7 @@ import matplotlib.animation as animation
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Int64
 
 HISTORY_LEN = 200          # number of points kept on each graph
 POSITION_TOPIC = "angle_data"
@@ -63,7 +63,7 @@ class EncoderMonitor(Node):
         self.position_log = []   # [{"t": elapsed_sec, "value": ticks}, ...]
         self.rpm_log = []        # [{"t": elapsed_sec, "value": rpm}, ...]
 
-        self.create_subscription(Float32, POSITION_TOPIC, self._position_cb, qos)
+        self.create_subscription(Int64, POSITION_TOPIC, self._position_cb, qos)
         self.create_subscription(Float32, RPM_TOPIC, self._rpm_cb, qos)
 
         # Periodically flush history to disk so you don't lose everything
@@ -75,7 +75,7 @@ class EncoderMonitor(Node):
             f"writing history to '{self.history_file}' every {save_interval:.1f}s"
         )
 
-    def _position_cb(self, msg: Float32):
+    def _position_cb(self, msg: Int64):
         with self.lock:
             self.position_hist.append(msg.data)
             self.position_log.append(
@@ -103,6 +103,10 @@ class EncoderMonitor(Node):
         except OSError as e:
             self.get_logger().warn(f"Failed to write history file: {e}")
 
+
+def angle_to_ticks(x):
+    deg_to_t = (600*4) / 360
+    return x * deg_to_t
 
 def _ros_spin_thread(node):
     rclpy.spin(node)
@@ -132,6 +136,7 @@ def main(args=None):
     def update(_frame):
         with node.lock:
             pos_data = list(node.position_hist)
+            # pos_data = [angle_to_ticks(x)  for x in pos_data]
             rpm_data = list(node.rpm_hist)
 
         line_pos.set_data(range(len(pos_data)), pos_data)
