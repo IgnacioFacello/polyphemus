@@ -15,20 +15,15 @@ extern "C" {
 /* Opaque handle to an encoder instance. */
 typedef struct encoder_dev_t *encoder_handle_t;
 
-/* Optional: called from a library-owned task (NOT from ISR context) whenever
- * the pulse count crosses one of the internal watch points. Safe to do
- * logging, mutex-protected work, etc. inside this callback. */
-typedef void (*encoder_event_cb_t)(int watch_point_value, void *user_ctx);
-
 typedef struct {
     int      gpio_a;              /* Encoder channel A GPIO */
     int      gpio_b;              /* Encoder channel B GPIO */
-    int      pcnt_high_limit;     /* Counter wraps/saturates above this */
-    int      pcnt_low_limit;      /* Counter wraps/saturates below this */
+    int      pcnt_high_limit;     /* Counter wraps back near 0 above this */
+    int      pcnt_low_limit;      /* Counter wraps back near 0 below this */
     uint32_t glitch_filter_ns;    /* Software glitch filter, 0 to disable */
 } encoder_config_t;
 
-/* Sensible defaults: +/-32767 range, 1us glitch filter. */
+/* Sensible defaults: +/-ppr range, 1us glitch filter. */
 #define ENCODER_DEFAULT_CONFIG(a_gpio, b_gpio, ppr)   \
     {                                             \
         .gpio_a = (a_gpio),                       \
@@ -38,16 +33,26 @@ typedef struct {
         .glitch_filter_ns = 1000,                  \
     }
 
-/* Create and start an encoder instance. */
+/* Create and start an encoder instance. Internally registers watch points at
+ * pcnt_high_limit/pcnt_low_limit so wraparound can be tracked — see
+ * encoder_get_total_count(). */
 esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle);
 
 /* Stop and free an encoder instance. */
 esp_err_t encoder_deinit(encoder_handle_t handle);
 
-/* Read the current raw pulse count. */
+/* Read the current raw pulse count (wraps at pcnt_high_limit/pcnt_low_limit).
+ * Do NOT use this directly for RPM/velocity calculations — a wrap produces a
+ * large discontinuous jump. Use encoder_get_total_count() instead. */
 esp_err_t encoder_get_count(encoder_handle_t handle, int *count);
 
-/* Reset the counter to zero. */
+/* Read an unwrapped, continuous total count: the raw hardware count plus an
+ * internally tracked offset that compensates for every wrap at
+ * pcnt_high_limit/pcnt_low_limit. Safe to use for RPM/velocity calculations —
+ * delta_total_count / delta_time stays correct across wraps. */
+esp_err_t encoder_get_total_count(encoder_handle_t handle, int64_t *total_count);
+
+/* Reset both the raw hardware counter and the internal wrap offset to zero. */
 esp_err_t encoder_clear_count(encoder_handle_t handle);
 
 #ifdef __cplusplus
