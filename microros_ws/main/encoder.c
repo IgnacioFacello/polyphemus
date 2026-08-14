@@ -19,18 +19,16 @@ struct encoder_dev_t {
     int              pcnt_high_limit;
     int              pcnt_low_limit;
 
-    /* Accumulated offset from wrap events at the high/low limits, added to
-     * the raw hardware count to produce a continuous, unwrapped total. Only
-     * ever touched from within the on_reach ISR (write) and
-     * encoder_get_total_count()/encoder_clear_count() (read/reset), always
-     * under `spinlock`. */
+    /* Acumulador que guarda el conteo total en caso de que
+     * el pcnt supere alguno de sus limites y regrese a 0.
+     * */
     volatile int64_t accum;
     portMUX_TYPE      spinlock;
 };
 
-/* Runs in ISR context whenever the raw count reaches pcnt_high_limit or
- * pcnt_low_limit. At that moment the PCNT hardware wraps the raw count back
- * near zero, so we record the offset needed to keep a continuous total. */
+/* Funcion para los watchpoints limite. Si alguno de estos valores se alcanza
+ * esta funcion se asegura de sumar el conteo actual al acumulador
+ */
 static bool IRAM_ATTR pcnt_on_reach_isr(pcnt_unit_handle_t unit,
                                          const pcnt_watch_event_data_t *edata,
                                          void *user_ctx)
@@ -117,9 +115,7 @@ esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_han
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_two,
                         PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
 
-    // Watch points para detectar wraparound — deben registrarse ANTES de
-    // pcnt_unit_enable(), el driver PCNT solo los acepta con la unidad en
-    // estado "init".
+    // Watch points para detectar wraparound
     ret = pcnt_unit_add_watch_point(dev->unit, config->pcnt_high_limit);
     if (ret != ESP_OK) {
         goto fail_channels;
@@ -172,11 +168,6 @@ esp_err_t encoder_get_total_count(encoder_handle_t handle, int64_t *total_count)
         return ret;
     }
 
-    // Nota: hay una ventana teórica muy pequeña entre leer `raw` y tomar el
-    // spinlock donde podría ocurrir un wrap; en la práctica, a las
-    // frecuencias típicas de un encoder esto es despreciable. Si se necesita
-    // exactitud perfecta, leer accum y raw dentro de la misma sección
-    // crítica requeriría acceder al registro del PCNT directamente.
     portENTER_CRITICAL(&handle->spinlock);
     *total_count = handle->accum + raw;
     portEXIT_CRITICAL(&handle->spinlock);
