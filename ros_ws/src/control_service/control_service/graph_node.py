@@ -89,6 +89,7 @@ class EncoderMonitor(Node):
             self.rpm_log.append(
                 {"t": round(time.time() - self._start_time, 3), "value": msg.data}
             )
+            # El tiempo que guardamos es el del graph_node
         print(f"RPM: {msg.data:.2f}")
 
     def _save_history(self):
