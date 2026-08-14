@@ -108,12 +108,25 @@ esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_han
     // Configuración de los canales
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_one,
                         PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
+    // Increase on positive (+1), decrease on negative (-1)
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_one,
                         PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+    // Keep on positive (*1), decrease on negative (*-1)
+    /*              EDGE A
+     *                1      0
+     * LEVEL  1   |  -1     +1
+     *   B    0   |  +1     -1
+     */
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_two,
                         PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_DECREASE));
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_two,
                         PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+    /*              EDGE B
+     *                1      0
+     * LEVEL  1   |  +1     -1
+     *   A    0   |  -1     +1
+     */
+
 
     // Watch points para detectar wraparound
     ret = pcnt_unit_add_watch_point(dev->unit, config->pcnt_high_limit);
