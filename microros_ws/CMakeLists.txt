@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 
 set(
   EXTRA_COMPONENT_DIRS
-    "/home/ifacello/containers/jazzyDesktop/esp_components"
+    "${HOME}/esp_components"
 )
 
 if(DEFINED ENV{MICROROS_NAMESPACE})

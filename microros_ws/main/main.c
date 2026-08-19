@@ -21,10 +21,6 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
-
-#include <custom_interfaces/srv/motor.h>
-#include <custom_interfaces/msg/motor_rpm.h>
-
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 #include <rmw_microros/rmw_microros.h>
 #endif
@@ -45,7 +41,7 @@
 #define ENCODER_GPIO_A 32
 #define ENCODER_GPIO_B 33
 #define ENCODER_PPR 600
-#define TIMER_PERIOD_MS 100
+#define TIMER_PERIOD_MS 100 // Reducido de 400ms
 
 static const char *TAG = "micro_ros";
 
@@ -65,7 +61,7 @@ static int64_t previous_count = 0;
 float calculate_rpm(int64_t current, int64_t previous)
 {
     float delta_ticks = (float)(current - previous);     // Diferencia en ticks
-    float time_sec = (float)TIMER_PERIOD_MS / 1000.0;  // Tiempo transcurrido en segundos
+    float time_sec = (float)TIMER_PERIOD_MS / 1000.0;    // Tiempo transcurrido en segundos
 
     // 1. delta_angle / 360.0 -> Convierte los grados a VUELTAS
     // 2. / time_sec         ->  cantidad de vueltas por SEGUNDO
