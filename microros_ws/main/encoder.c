@@ -15,7 +15,36 @@ struct encoder_dev_t {
     pcnt_unit_handle_t    unit;
     pcnt_channel_handle_t chan_one;
     pcnt_channel_handle_t chan_two;
+
+    int              pcnt_high_limit;
+    int              pcnt_low_limit;
+
+    /* Acumulador que guarda el conteo total en caso de que
+     * el pcnt supere alguno de sus limites y regrese a 0.
+     * */
+    volatile int64_t accum;
+    portMUX_TYPE      spinlock;
 };
+
+/* Funcion para los watchpoints limite. Si alguno de estos valores se alcanza
+ * esta funcion se asegura de sumar el conteo actual al acumulador
+ */
+static bool IRAM_ATTR pcnt_on_reach_isr(pcnt_unit_handle_t unit,
+                                         const pcnt_watch_event_data_t *edata,
+                                         void *user_ctx)
+{
+    struct encoder_dev_t *dev = (struct encoder_dev_t *)user_ctx;
+
+    portENTER_CRITICAL_ISR(&dev->spinlock);
+    if (edata->watch_point_value == dev->pcnt_high_limit) {
+        dev->accum += dev->pcnt_high_limit;
+    } else if (edata->watch_point_value == dev->pcnt_low_limit) {
+        dev->accum += dev->pcnt_low_limit; /* low_limit is negative */
+    }
+    portEXIT_CRITICAL_ISR(&dev->spinlock);
+
+    return false; /* no higher-priority task woken */
+}
 
 esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_handle)
 {
@@ -30,6 +59,11 @@ esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_han
     }
 
     esp_err_t ret = ESP_OK;
+
+    dev->pcnt_high_limit = config->pcnt_high_limit;
+    dev->pcnt_low_limit  = config->pcnt_low_limit;
+    dev->accum = 0;
+    dev->spinlock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
 
     // Creación de la unidad
     pcnt_unit_config_t unit_config = {
@@ -74,12 +108,42 @@ esp_err_t encoder_init(const encoder_config_t *config, encoder_handle_t *out_han
     // Configuración de los canales
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_one,
                         PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
+    // Increase on positive (+1), decrease on negative (-1)
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_one,
                         PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+    // Keep on positive (*1), decrease on negative (*-1)
+    /*              EDGE A
+     *                1      0
+     * LEVEL  1   |  -1     +1
+     *   B    0   |  +1     -1
+     */
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(dev->chan_two,
                         PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_DECREASE));
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(dev->chan_two,
                         PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+    /*              EDGE B
+     *                1      0
+     * LEVEL  1   |  +1     -1
+     *   A    0   |  -1     +1
+     */
+
+
+    // Watch points para detectar wraparound
+    ret = pcnt_unit_add_watch_point(dev->unit, config->pcnt_high_limit);
+    if (ret != ESP_OK) {
+        goto fail_channels;
+    }
+    ret = pcnt_unit_add_watch_point(dev->unit, config->pcnt_low_limit);
+    if (ret != ESP_OK) {
+        goto fail_channels;
+    }
+    pcnt_event_callbacks_t cbs = {
+        .on_reach = pcnt_on_reach_isr,
+    };
+    ret = pcnt_unit_register_event_callbacks(dev->unit, &cbs, dev);
+    if (ret != ESP_OK) {
+        goto fail_channels;
+    }
 
     // Activación de la unidad
     ESP_ERROR_CHECK(pcnt_unit_enable(dev->unit));
@@ -105,11 +169,35 @@ esp_err_t encoder_get_count(encoder_handle_t handle, int *count)
     return pcnt_unit_get_count(handle->unit, count);
 }
 
+esp_err_t encoder_get_total_count(encoder_handle_t handle, int64_t *total_count)
+{
+    if (!handle || !total_count) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    int raw = 0;
+    esp_err_t ret = pcnt_unit_get_count(handle->unit, &raw);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    portENTER_CRITICAL(&handle->spinlock);
+    *total_count = handle->accum + raw;
+    portEXIT_CRITICAL(&handle->spinlock);
+
+    return ESP_OK;
+}
+
 esp_err_t encoder_clear_count(encoder_handle_t handle)
 {
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
     }
+
+    portENTER_CRITICAL(&handle->spinlock);
+    handle->accum = 0;
+    portEXIT_CRITICAL(&handle->spinlock);
+
     return pcnt_unit_clear_count(handle->unit);
 }
 
