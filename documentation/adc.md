@@ -19,13 +19,13 @@ La perilla gira lo suficientemente lento para considerar oneshot, aunque cualqui
 La ESP32 contiene una ADC tipo SAR (successive-approximation-register)
 
 ## Limitaciones
-> WIFI
+> **WIFI**:
 > Si se usa el modulo de wifi, la ADC2 se vuelve inutilizable.
 
-> Rango de entrada
+> **Rango de entrada**: 
 > Estas ADC solo soportan voltajes entre 0 y 3.3V
 
-> No linearidad
+> **No linearidad**: 
 > La conversion es no linear, como puede observarse en la siguiente imagen
 > ![](adc_linearity.png)
 > No detecta diferencias entre 0 y 0.13V, ni entre 3.2 y 3.3
@@ -35,12 +35,11 @@ La ESP32 contiene una ADC tipo SAR (successive-approximation-register)
 NOTA: Probablemente nos convenga trabajar en el rango entre 0 y 2.5V. Reduce la resolución a 0.6mV por nivel pero reduce la simplicidad de conversión
 %%
 
-> Ruido electronico
+> **Ruido electronico**:
 
 ## Ecuación de conversión
 ![](ecuacion_adc.png)
 
-V_{data} = \frac{data}{2^{bitwidth} - 1} \times \fracc{V_{ref}}{k}
 donde 
 - `data` es el resultado de la ADC
 - `bitwidth` es la resolución en bits de la adc
@@ -50,5 +49,5 @@ donde
 
 ## Referencias
 - Documentación oficial de espressif - https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/adc/index.html
-- tutorial para implementar una adc oneshot - https://randomnerdtutorials.com/esp-idf-esp32-gpio-analog-adc/
+- tutorial para implementar una adc - https://randomnerdtutorials.com/esp-idf-esp32-gpio-analog-adc/
 - Manual Tecnico de Referencia de la ESP32 - https://documentation.espressif.com/esp32_technical_reference_manual_en.pdf
