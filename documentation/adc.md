@@ -6,12 +6,24 @@ Los pines exactos varian segun la placa elegida.
 
 Soportan hasta 4096 niveles diferenciables (12 bits) y un voltaje maximo de 3.3V. Su resolucion es de 0.8mV por nivel.
 
+## Modos de sampleo
+Dos modos **Oneshot** o **Continuo**.
+
+Oneshot: El CPU solicita una conversión, espera y luego lee el resultado. Baja frecuencia y cada conversion es mas costosa en terminos computacionales.
+
+Continuo: La ADC se configura para convertir y almancenar valores de manera continua, el CPU solo necesita leer una posición de memoria. Alta frequencia, no ocupa recursos del CPU, requiere mas setup.
+
+La perilla gira lo suficientemente lento para considerar oneshot, aunque cualquiera de las dos opciones es valida.
+
+## Hardware
+La ESP32 contiene una ADC tipo SAR (successive-approximation-register)
+
 ## Limitaciones
 > WIFI
 > Si se usa el modulo de wifi, la ADC2 se vuelve inutilizable.
 
 > Rango de entrada
-> Las ADC solo soportan voltajes entre 0 y 3.3V
+> Estas ADC solo soportan voltajes entre 0 y 3.3V
 
 > No linearidad
 > La conversion es no linear, como puede observarse en la siguiente imagen
@@ -39,3 +51,4 @@ donde
 ## Referencias
 - Documentación oficial de espressif - https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/adc/index.html
 - tutorial para implementar una adc oneshot - https://randomnerdtutorials.com/esp-idf-esp32-gpio-analog-adc/
+- Manual Tecnico de Referencia de la ESP32 - https://documentation.espressif.com/esp32_technical_reference_manual_en.pdf
