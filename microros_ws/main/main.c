@@ -58,19 +58,27 @@
 // #define ENCODER_GPIO_B 33
 // #define ENCODER_PPR 600
 #define TIMER_PERIOD_MS 100 // Reducido de 400ms
+#define AVG_SAMPLES 200      // Numero de muestras por mensaje
 
-#define ADC_PIN ADC_CHANNEL_7        // Channel 7 - Check ESP32 Pinout for the GPIO Number
+#define ADC_PIN_CLEAN ADC_CHANNEL_7        // Channel 7 - Check ESP32 Pinout for the GPIO Number
+#define ADC_PIN_DIRTY ADC_CHANNEL_6        // Channel 7 - Check ESP32 Pinout for the GPIO Number
 #define ADC_UNIT ADC_UNIT_1          // ADC1
 #define ADC_BITWIDTH ADC_BITWIDTH_12 // 12-bit resolution (0-4095)
 #define ADC_ATTEN ADC_ATTEN_DB_12    // ~3.3V full-scale voltage
 
 static const char *TAG = "micro_ros";
 
-static rcl_publisher_t position_publisher;
-std_msgs__msg__Float32 position_msg;
+static rcl_publisher_t clean__position_publisher;
+std_msgs__msg__Float32 clean__position_msg;
 
-static rcl_publisher_t voltage_publisher;
-std_msgs__msg__Float32 voltage_msg;
+static rcl_publisher_t clean__voltage_publisher;
+std_msgs__msg__Float32 clean__voltage_msg;
+
+static rcl_publisher_t dirty__position_publisher;
+std_msgs__msg__Float32 dirty__position_msg;
+
+static rcl_publisher_t dirty__voltage_publisher;
+std_msgs__msg__Float32 dirty__voltage_msg;
 
 // Agregar después de las definiciones de TAG
 static adc_oneshot_unit_handle_t adc_handle = NULL;
@@ -83,33 +91,53 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     if (timer == NULL || adc_handle == NULL)
         return;
 
-    int adc_value = 0;
+    int adc_sample_clean = 0;
+    int adc_sample_dirty = 0;
+    float adc_value_clean = 0.0;
+    float adc_value_dirty = 0.0;
     (void)last_call_time;
 
     // 1. Leer ADC
-    esp_err_t adc_err = adc_oneshot_read(adc_handle, ADC_PIN, &adc_value);
-    if (adc_err != ESP_OK)
-    {
-        ESP_LOGW(TAG, "ADC read failed: %d", adc_err);
-        return;
+    //
+    for (int i=0; i<AVG_SAMPLES; i++) {
+        esp_err_t adc_err = adc_oneshot_read(adc_handle, ADC_PIN_CLEAN, &adc_sample_clean);
+        if (adc_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "ADC read failed: %d", adc_err);
+            return;
+        }
+        adc_value_clean += (float)adc_sample_clean;
+        adc_err = adc_oneshot_read(adc_handle, ADC_PIN_CLEAN, &adc_sample_dirty);
+        if (adc_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "ADC read failed: %d", adc_err);
+            return;
+        }
+        adc_value_dirty += (float)adc_sample_dirty;
     }
+    adc_value_clean = adc_value_clean/(float)AVG_SAMPLES;
+    adc_value_dirty = adc_value_dirty/(float)AVG_SAMPLES;
 
     // 2. Calcular posición en porcentaje (0-100)
-    float posicion_porcentaje = ((float)adc_value / ADC_MAX_VALUE * 100.0f);
+    float posicion_porcentaje_clean = (adc_value_clean / ADC_MAX_VALUE) * 100.0f;
+    float posicion_porcentaje_dirty = (adc_value_dirty / ADC_MAX_VALUE) * 100.0f;
 
     // 3. Calcular voltaje (0-3.3V)
-    float voltaje = ((float)adc_value / ADC_MAX_VALUE) * MAX_VOLTAGE;
+    float voltaje_clean = (adc_value_clean / ADC_MAX_VALUE) * MAX_VOLTAGE;
+    float voltaje_dirty = (adc_value_dirty / ADC_MAX_VALUE) * MAX_VOLTAGE;
 
     // 4. Publicar posición
-    position_msg.data = posicion_porcentaje;
-    RCSOFTCHECK(rcl_publish(&position_publisher, &position_msg, NULL));
+    clean__position_msg.data = posicion_porcentaje_clean;
+    RCSOFTCHECK(rcl_publish(&clean__position_publisher, &clean__position_msg, NULL));
 
     // 5. Publicar voltaje
-    voltage_msg.data = voltaje;
-    RCSOFTCHECK(rcl_publish(&voltage_publisher, &voltage_msg, NULL));
+    clean__voltage_msg.data = voltaje_clean;
+    RCSOFTCHECK(rcl_publish(&clean__voltage_publisher, &clean__voltage_msg, NULL));
 
-    ESP_LOGI(TAG, "ADC: %d | Posición: %lld%% | Voltaje: %.2fV",
-             adc_value, posicion_porcentaje, voltaje);
+    ESP_LOGI(TAG, "CLEAN | mean ADC: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
+             adc_value_clean, posicion_porcentaje_clean, voltaje_clean);
+    ESP_LOGI(TAG, "DIRTY | mean ADC: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
+             adc_value_dirty, posicion_porcentaje_dirty, voltaje_dirty);
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
@@ -201,25 +229,25 @@ void micro_ros_task(void *arg)
 
     // Inicialización del publicador
     rc = rclc_publisher_init_default(
-        &position_publisher,
+        &clean__position_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-        "percentage_position");
+        "clean/percentage_position");
     if (rc != RCL_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to init position_publisher: %d", rc);
+        ESP_LOGE(TAG, "Failed to init clean/position_publisher: %d", rc);
         vTaskDelete(NULL);
         return;
     }
 
     rc = rclc_publisher_init_default(
-        &voltage_publisher,
+        &clean__voltage_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-        "voltage");
+        "clean/voltage");
     if (rc != RCL_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to init voltage_publisher: %d", rc);
+        ESP_LOGE(TAG, "Failed to init clean/voltage_publisher: %d", rc);
         vTaskDelete(NULL);
         return;
     }
@@ -278,7 +306,7 @@ void micro_ros_task(void *arg)
         usleep(10000);
     }
 
-    RCCHECK(rcl_publisher_fini(&position_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&clean__position_publisher, &node));
     RCCHECK(rcl_node_fini(&node));
     vTaskDelete(NULL);
 }
@@ -300,7 +328,8 @@ void app_main(void)
         .bitwidth = ADC_BITWIDTH,
         .atten = ADC_ATTEN,
     };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_PIN, &config));
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_PIN_CLEAN, &config));
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_PIN_DIRTY, &config));
 
     xTaskCreate(micro_ros_task, "micro_ros_task",
                 MICRO_ROS_APP_STACK, NULL, MICRO_ROS_APP_TASK_PRIO, NULL);

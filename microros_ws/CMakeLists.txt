@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 
 set(
   EXTRA_COMPONENT_DIRS
-    "${HOME}/esp_components"
+    "$ENV{HOME}/esp_components"
 )
 
 if(DEFINED ENV{MICROROS_NAMESPACE})
