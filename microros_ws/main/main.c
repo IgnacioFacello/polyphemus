@@ -10,7 +10,8 @@
 #include "esp_system.h"
 #include "esp_err.h"
 #include "driver/gpio.h"
-#include "encoder.h"
+#include <esp_adc/adc_oneshot.h>
+#include "sdkconfig.h"
 
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
@@ -25,92 +26,97 @@
 #include <rmw_microros/rmw_microros.h>
 #endif
 
-#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){printf("Failed status on line %d: %d. Aborting.\n",__LINE__,(int)temp_rc);vTaskDelete(NULL);}}
-#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){printf("Failed status on line %d: %d. Continuing.\n",__LINE__,(int)temp_rc);}}
+#define RCCHECK(fn)                                                                      \
+    {                                                                                    \
+        rcl_ret_t temp_rc = fn;                                                          \
+        if ((temp_rc != RCL_RET_OK))                                                     \
+        {                                                                                \
+            printf("Failed status on line %d: %d. Aborting.\n", __LINE__, (int)temp_rc); \
+            vTaskDelete(NULL);                                                           \
+        }                                                                                \
+    }
+#define RCSOFTCHECK(fn)                                                                    \
+    {                                                                                      \
+        rcl_ret_t temp_rc = fn;                                                            \
+        if ((temp_rc != RCL_RET_OK))                                                       \
+        {                                                                                  \
+            printf("Failed status on line %d: %d. Continuing.\n", __LINE__, (int)temp_rc); \
+        }                                                                                  \
+    }
 #define MICRO_ROS_APP_STACK 16000
 #define MICRO_ROS_APP_TASK_PRIO 5
 
 #ifndef MICROROS_NAMESPACE
-    #define MICROROS_NAMESPACE ""
+#define MICROROS_NAMESPACE ""
 #endif
 
 #ifndef DOMAIN_ID
-    #define DOMAIN_ID 0
+#define DOMAIN_ID 0
 #endif
 
-#define ENCODER_GPIO_A 32
-#define ENCODER_GPIO_B 33
-#define ENCODER_PPR 600
+// #define ENCODER_GPIO_A 32
+// #define ENCODER_GPIO_B 33
+// #define ENCODER_PPR 600
 #define TIMER_PERIOD_MS 100 // Reducido de 400ms
+
+#define ADC_PIN ADC_CHANNEL_7        // Channel 7 - Check ESP32 Pinout for the GPIO Number
+#define ADC_UNIT ADC_UNIT_1          // ADC1
+#define ADC_BITWIDTH ADC_BITWIDTH_12 // 12-bit resolution (0-4095)
+#define ADC_ATTEN ADC_ATTEN_DB_12    // ~3.3V full-scale voltage
 
 static const char *TAG = "micro_ros";
 
-static rcl_publisher_t angle_publisher;
-std_msgs__msg__Int64 angle_msg;
+static rcl_publisher_t position_publisher;
+std_msgs__msg__Float32 position_msg;
 
-static rcl_publisher_t rpm_publisher;
-std_msgs__msg__Float32 rpm_msg;
+static rcl_publisher_t voltage_publisher;
+std_msgs__msg__Float32 voltage_msg;
 
-encoder_config_t enc_cfg = ENCODER_DEFAULT_CONFIG(ENCODER_GPIO_A, ENCODER_GPIO_B, ENCODER_PPR*4);
-encoder_handle_t enc;
-static int64_t previous_count = 0;
-/* ── Callbacks micro-ROS ────────────────────────────────────── */
+// Agregar después de las definiciones de TAG
+static adc_oneshot_unit_handle_t adc_handle = NULL;
+static const float MAX_VOLTAGE = 3.3f; // Voltaje máximo según ATTEN_DB_12
+static const int ADC_MAX_VALUE = 4095; // Resolución 12-bit
 
-
-// Función para calcular RPM
-float calculate_rpm(int64_t current, int64_t previous)
-{
-    float delta_ticks = (float)(current - previous);     // Diferencia en ticks
-    float time_sec = (float)TIMER_PERIOD_MS / 1000.0;    // Tiempo transcurrido en segundos
-
-    // 1. delta_angle / 360.0 -> Convierte los grados a VUELTAS
-    // 2. / time_sec         ->  cantidad de vueltas por SEGUNDO
-    // 3. * 60.0             -> Multiplica por 60 para pasarlo a MINUTOS (RPM)
-    float rpm = (delta_ticks / (float)(ENCODER_PPR*4)) / time_sec * 60.0;
-
-    return rpm;
-}
-
-float calculate_angle(int count){
-    float deg_per_pulse = 360.0 / ((float)ENCODER_PPR*4);
-    return (float)count * deg_per_pulse;
-}
-
-// Ahora en el timer callback
+// En timer_callback, reemplaza la línea incompleta con:
 void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 {
-    int count = 0;
-    int64_t total_count = 0;
-    (void) last_call_time;
-    if (timer == NULL)
+    if (timer == NULL || adc_handle == NULL)
         return;
 
-    RCSOFTCHECK(encoder_get_count(enc, &count));
-    RCSOFTCHECK(encoder_get_total_count(enc, &total_count));
+    int adc_value = 0;
+    (void)last_call_time;
 
-    // Calcular RPM
-    float angle = calculate_angle(count);
-    float rpm = calculate_rpm(total_count, previous_count);
+    // 1. Leer ADC
+    esp_err_t adc_err = adc_oneshot_read(adc_handle, ADC_PIN, &adc_value);
+    if (adc_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "ADC read failed: %d", adc_err);
+        return;
+    }
 
-    // Log para ver ambos datos
-    ESP_LOGI(TAG, "Position: %.2f deg | RPM: %.2f rpm", angle, rpm);
+    // 2. Calcular posición en porcentaje (0-100)
+    float posicion_porcentaje = ((float)adc_value / ADC_MAX_VALUE * 100.0f);
 
-    // Publicar
-    angle_msg.data = total_count;
-    RCSOFTCHECK(rcl_publish(&angle_publisher, &angle_msg, NULL));
+    // 3. Calcular voltaje (0-3.3V)
+    float voltaje = ((float)adc_value / ADC_MAX_VALUE) * MAX_VOLTAGE;
 
-    rpm_msg.data = rpm;
-    RCSOFTCHECK(rcl_publish(&rpm_publisher, &rpm_msg, NULL));
+    // 4. Publicar posición
+    position_msg.data = posicion_porcentaje;
+    RCSOFTCHECK(rcl_publish(&position_publisher, &position_msg, NULL));
 
-    // Guardar para la próxima lectura
-    previous_count = total_count;
+    // 5. Publicar voltaje
+    voltage_msg.data = voltaje;
+    RCSOFTCHECK(rcl_publish(&voltage_publisher, &voltage_msg, NULL));
+
+    ESP_LOGI(TAG, "ADC: %d | Posición: %lld%% | Voltaje: %.2fV",
+             adc_value, posicion_porcentaje, voltaje);
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
 void micro_ros_task(void *arg)
 {
     rcl_allocator_t allocator = rcl_get_default_allocator();
-    rclc_support_t  support;
+    rclc_support_t support;
     rcl_ret_t rc;
     int retry_count = 0;
     const int MAX_RETRIES = 5;
@@ -122,7 +128,8 @@ void micro_ros_task(void *arg)
 
     rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
     rc = rcl_init_options_init(&init_options, allocator);
-    if (rc != RCL_RET_OK) {
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGE(TAG, "Failed to initialize init_options: %d", rc);
         vTaskDelete(NULL);
         return;
@@ -130,7 +137,8 @@ void micro_ros_task(void *arg)
 
     // Setear el DOMAIN_ID
     rc = rcl_init_options_set_domain_id(&init_options, DOMAIN_ID);
-    if (rc != RCL_RET_OK) {
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGE(TAG, "Failed to set domain id: %d", rc);
         vTaskDelete(NULL);
         return;
@@ -139,9 +147,10 @@ void micro_ros_task(void *arg)
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
     rmw_init_options_t *rmw_options = rcl_init_options_get_rmw_init_options(&init_options);
     rc = rmw_uros_options_set_udp_address(CONFIG_MICRO_ROS_AGENT_IP,
-                                         CONFIG_MICRO_ROS_AGENT_PORT,
-                                         rmw_options);
-    if (rc != RCL_RET_OK) {
+                                          CONFIG_MICRO_ROS_AGENT_PORT,
+                                          rmw_options);
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGE(TAG, "Failed to set UDP address: %d", rc);
         vTaskDelete(NULL);
         return;
@@ -151,23 +160,29 @@ void micro_ros_task(void *arg)
 #endif
 
     // Retry loop for rclc_support_init
-    while (retry_count < MAX_RETRIES) {
+    while (retry_count < MAX_RETRIES)
+    {
         ESP_LOGI(TAG, "Attempting micro-ROS support init (attempt %d/%d)...",
                  retry_count + 1, MAX_RETRIES);
         rc = rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
 
-        if (rc == RCL_RET_OK) {
+        if (rc == RCL_RET_OK)
+        {
             ESP_LOGI(TAG, "Micro-ROS support initialized successfully");
             break;
-        } else {
+        }
+        else
+        {
             ESP_LOGW(TAG, "Failed status on rclc_support_init: %d. %s", rc,
-                    retry_count < MAX_RETRIES - 1 ? "Retrying..." : "Max retries reached. Aborting.");
+                     retry_count < MAX_RETRIES - 1 ? "Retrying..." : "Max retries reached. Aborting.");
 
-
-            if (retry_count < MAX_RETRIES - 1) {
+            if (retry_count < MAX_RETRIES - 1)
+            {
                 vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
                 retry_count++;
-            } else {
+            }
+            else
+            {
                 vTaskDelete(NULL);
                 return;
             }
@@ -176,7 +191,8 @@ void micro_ros_task(void *arg)
 
     rcl_node_t node = rcl_get_zero_initialized_node();
     rc = rclc_node_init_default(&node, "microros_node", MICROROS_NAMESPACE, &support);
-    if (rc != RCL_RET_OK) {
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGE(TAG, "Failed to init node: %d", rc);
         vTaskDelete(NULL);
         return;
@@ -185,27 +201,28 @@ void micro_ros_task(void *arg)
 
     // Inicialización del publicador
     rc = rclc_publisher_init_default(
-        &angle_publisher,
+        &position_publisher,
         &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int64),
-        "angle_data");
-    if (rc != RCL_RET_OK) {
-        ESP_LOGE(TAG, "Failed to init angle_publisher: %d", rc);
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+        "percentage_position");
+    if (rc != RCL_RET_OK)
+    {
+        ESP_LOGE(TAG, "Failed to init position_publisher: %d", rc);
         vTaskDelete(NULL);
         return;
     }
 
     rc = rclc_publisher_init_default(
-        &rpm_publisher,
+        &voltage_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-        "rpm_data");
-    if (rc != RCL_RET_OK) {
-        ESP_LOGE(TAG, "Failed to init rpm_publisher: %d", rc);
+        "voltage");
+    if (rc != RCL_RET_OK)
+    {
+        ESP_LOGE(TAG, "Failed to init voltage_publisher: %d", rc);
         vTaskDelete(NULL);
         return;
     }
-
 
     // Inicialización del Timer
     rcl_timer_t timer = rcl_get_zero_initialized_timer();
@@ -215,7 +232,8 @@ void micro_ros_task(void *arg)
         RCL_MS_TO_NS(TIMER_PERIOD_MS),
         timer_callback,
         true);
-    if (rc != RCL_RET_OK) {
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGE(TAG, "Failed to init timer: %d", rc);
         vTaskDelete(NULL);
         return;
@@ -225,42 +243,45 @@ void micro_ros_task(void *arg)
     // Executor
     rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
     rc = rclc_executor_init(&executor, &support.context, 3, &allocator);
-    if (rc != RCL_RET_OK) {
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGE(TAG, "Failed to init executor: %d", rc);
         vTaskDelete(NULL);
         return;
     }
 
     rc = rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(1000));
-    if (rc != RCL_RET_OK) {
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGW(TAG, "Failed to set executor timeout: %d (continuing)", rc);
     }
 
     rc = rclc_executor_add_timer(&executor, &timer);
-    if (rc != RCL_RET_OK) {
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGE(TAG, "Failed to add timer to executor: %d", rc);
         vTaskDelete(NULL);
         return;
     }
 
-    if (rc != RCL_RET_OK) {
+    if (rc != RCL_RET_OK)
+    {
         ESP_LOGE(TAG, "Failed to add service to executor: %d", rc);
         vTaskDelete(NULL);
         return;
     }
     ESP_LOGI(TAG, "Executor configured successfully. Starting main loop...");
 
-    while (1) {
+    while (1)
+    {
         rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
         usleep(10000);
     }
 
-    RCCHECK(rcl_publisher_fini(&angle_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&position_publisher, &node));
     RCCHECK(rcl_node_fini(&node));
-    encoder_deinit(enc);
     vTaskDelete(NULL);
 }
-
 
 void app_main(void)
 {
@@ -268,11 +289,18 @@ void app_main(void)
     ESP_ERROR_CHECK(uros_network_interface_initialize());
 #endif
 
-    ESP_LOGI("main", "pins  : %d, %d", enc_cfg.gpio_a, enc_cfg.gpio_b);
-    ESP_LOGI("main", "limits: [%d, %d]", enc_cfg.pcnt_low_limit, enc_cfg.pcnt_high_limit);
-    ESP_ERROR_CHECK(gpio_set_pull_mode(ENCODER_GPIO_A, GPIO_PULLUP_ONLY));
-    ESP_ERROR_CHECK(gpio_set_pull_mode(ENCODER_GPIO_B, GPIO_PULLUP_ONLY));
-    ESP_ERROR_CHECK(encoder_init(&enc_cfg, &enc));
+    // Configure ADC
+    adc_oneshot_unit_init_cfg_t init_config = {
+        .unit_id = ADC_UNIT,
+        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
+
+    adc_oneshot_chan_cfg_t config = {
+        .bitwidth = ADC_BITWIDTH,
+        .atten = ADC_ATTEN,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_PIN, &config));
 
     xTaskCreate(micro_ros_task, "micro_ros_task",
                 MICRO_ROS_APP_STACK, NULL, MICRO_ROS_APP_TASK_PRIO, NULL);
