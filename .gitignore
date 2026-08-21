@@ -5,3 +5,4 @@ sdkconfig*
 dependencies.lock
 .cache
 components
+esp32/potenciometro_esp32/build/
