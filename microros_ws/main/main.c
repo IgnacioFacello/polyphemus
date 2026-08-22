@@ -232,7 +232,7 @@ void micro_ros_task(void *arg)
     }
 
     // Inicialización del Timer
-    r_timer_t timer = rcl_get_zero_initialized_timer();
+    rcl_timer_t timer = rcl_get_zero_initialized_timer();
     rc = rclc_timer_init_default2(
         &timer,
         &support,
