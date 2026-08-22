@@ -67,11 +67,11 @@
 
 static const char *TAG = "micro_ros";
 
-static rcl_publisher_t clean__position_publisher;
-std_msgs__msg__Float32 clean__position_msg;
+static rcl_publisher_t position_publisher;
+std_msgs__msg__Float32 position_msg;
 
-static rcl_publisher_t clean__voltage_publisher;
-std_msgs__msg__Float32 clean__voltage_msg;
+static rcl_publisher_t voltage_publisher;
+std_msgs__msg__Float32 voltage_msg;
 
 // Agregar después de las definiciones de TAG
 static adc_oneshot_unit_handle_t adc_handle = NULL;
@@ -84,8 +84,8 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     if (timer == NULL || adc_handle == NULL)
         return;
 
-    int adc_sample_clean = 0;
-    float adc_value_clean = 0.0;
+    int adc_sample = 0;
+    float adc_accumulator = 0.0;
     (void)last_call_time;
 
     // 1. Leer ADC
@@ -97,26 +97,26 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
             ESP_LOGW(TAG, "ADC read failed: %d", adc_err);
             return;
         }
-        adc_value_clean += (float)adc_sample_clean;
+        adc_accumulator += (float)adc_sample;
     }
-    adc_value_clean = adc_value_clean/(float)AVG_SAMPLES;
+    adc_accumulator = adc_accumulator/(float)AVG_SAMPLES;
 
     // 2. Calcular posición en porcentaje (0-100)
-    float posicion_porcentaje_clean = (adc_value_clean / ADC_MAX_VALUE) * 100.0f;
+    float posicion_porcentaje_clean = (adc_accumulator / ADC_MAX_VALUE) * 100.0f;
 
     // 3. Calcular voltaje (0-3.3V)
-    float voltaje_clean = (adc_value_clean / ADC_MAX_VALUE) * MAX_VOLTAGE;
+    float voltaje_clean = (adc_accumulator / ADC_MAX_VALUE) * MAX_VOLTAGE;
 
     // 4. Publicar posición
-    clean__position_msg.data = posicion_porcentaje_clean;
-    RCSOFTCHECK(rcl_publish(&clean__position_publisher, &clean__position_msg, NULL));
+    position_msg.data = posicion_porcentaje_clean;
+    RCSOFTCHECK(rcl_publish(&position_publisher, &clean__position_msg, NULL));
 
     // 5. Publicar voltaje
-    clean__voltage_msg.data = voltaje_clean;
+    voltage_msg.data = voltaje_clean;
     RCSOFTCHECK(rcl_publish(&clean__voltage_publisher, &clean__voltage_msg, NULL));
 
     ESP_LOGI(TAG, "mean ADC: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
-             adc_value_clean, posicion_porcentaje_clean, voltaje_clean);
+             adc_accumulator, posicion_porcentaje_clean, voltaje_clean);
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
@@ -208,7 +208,7 @@ void micro_ros_task(void *arg)
 
     // Inicialización del publicador
     rc = rclc_publisher_init_default(
-        &clean__position_publisher,
+        &position_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
         "clean/percentage_position");
@@ -285,7 +285,7 @@ void micro_ros_task(void *arg)
         usleep(10000);
     }
 
-    RCCHECK(rcl_publisher_fini(&clean__position_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&position_publisher, &node));
     RCCHECK(rcl_node_fini(&node));
     vTaskDelete(NULL);
 }
