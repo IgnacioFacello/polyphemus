@@ -58,7 +58,7 @@
 // #define ENCODER_GPIO_B 33
 // #define ENCODER_PPR 600
 #define TIMER_PERIOD_MS 100 // Reducido de 400ms
-#define AVG_SAMPLES 200      // Numero de muestras por mensaje
+#define AVG_SAMPLES 75      // Numero de muestras por mensaje
 
 #define ADC_PIN_CLEAN ADC_CHANNEL_7        // Channel 7 - Check ESP32 Pinout for the GPIO Number
 #define ADC_UNIT ADC_UNIT_1          // ADC1
@@ -115,7 +115,7 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     clean__voltage_msg.data = voltaje_clean;
     RCSOFTCHECK(rcl_publish(&clean__voltage_publisher, &clean__voltage_msg, NULL));
 
-    ESP_LOGI(TAG, "CLEAN | mean ADC: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
+    ESP_LOGI(TAG, "mean ADC: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
              adc_value_clean, posicion_porcentaje_clean, voltaje_clean);
 }
 
