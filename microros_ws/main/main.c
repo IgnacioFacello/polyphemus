@@ -26,22 +26,22 @@
 #include <rmw_microros/rmw_microros.h>
 #endif
 
-#define RCCHECK(fn)                                                                      
-    {                                                                                    
-        rcl_ret_t temp_rc = fn;                                                          
-        if ((temp_rc != RCL_RET_OK))                                                     
-        {                                                                                
-            printf("Failed status on line %d: %d. Aborting.n", __LINE__, (int)temp_rc); 
-            vTaskDelete(NULL);                                                           
-        }                                                                                
+#define RCCHECK(fn)                                                                      \
+    {                                                                                    \
+        rcl_ret_t temp_rc = fn;                                                          \
+        if ((temp_rc != RCL_RET_OK))                                                     \
+        {                                                                                \
+            printf("Failed status on line %d: %d. Aborting.\n", __LINE__, (int)temp_rc); \
+            vTaskDelete(NULL);                                                           \
+        }                                                                                \
     }
-#define RCSOFTCHECK(fn)                                                                    
-    {                                                                                      
-        rcl_ret_t temp_rc = fn;                                                            
-        if ((temp_rc != RCL_RET_OK))                                                       
-        {                                                                                  
-            printf("Failed status on line %d: %d. Continuing.n", __LINE__, (int)temp_rc); 
-        }                                                                                  
+#define RCSOFTCHECK(fn)                                                                    \
+    {                                                                                      \
+        rcl_ret_t temp_rc = fn;                                                            \
+        if ((temp_rc != RCL_RET_OK))                                                       \
+        {                                                                                  \
+            printf("Failed status on line %d: %d. Continuing.\n", __LINE__, (int)temp_rc); \
+        }                                                                                  \
     }
 #define MICRO_ROS_APP_STACK 16000
 #define MICRO_ROS_APP_TASK_PRIO 5
@@ -100,10 +100,10 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     adc_accumulator = adc_accumulator/(float)AVG_SAMPLES;
 
     if(ADC_MAX_VALUE < adc_accumulator){
-        ADC_MAX_VALUE = adc_accumulator
+        ADC_MAX_VALUE = adc_accumulator;
     }
     if(ADC_MIN_VALUE > adc_accumulator){
-        ADC_MIN_VALUE = adc_accumulator
+        ADC_MIN_VALUE = adc_accumulator;
     }
 
     // 2. Calcular posición en porcentaje (0-100)
