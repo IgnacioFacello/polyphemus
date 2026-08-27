@@ -26,22 +26,22 @@
 #include <rmw_microros/rmw_microros.h>
 #endif
 
-#define RCCHECK(fn)                                                                      \
-    {                                                                                    \
-        rcl_ret_t temp_rc = fn;                                                          \
-        if ((temp_rc != RCL_RET_OK))                                                     \
-        {                                                                                \
-            printf("Failed status on line %d: %d. Aborting.\n", __LINE__, (int)temp_rc); \
-            vTaskDelete(NULL);                                                           \
-        }                                                                                \
+#define RCCHECK(fn)                                                                      
+    {                                                                                    
+        rcl_ret_t temp_rc = fn;                                                          
+        if ((temp_rc != RCL_RET_OK))                                                     
+        {                                                                                
+            printf("Failed status on line %d: %d. Aborting.n", __LINE__, (int)temp_rc); 
+            vTaskDelete(NULL);                                                           
+        }                                                                                
     }
-#define RCSOFTCHECK(fn)                                                                    \
-    {                                                                                      \
-        rcl_ret_t temp_rc = fn;                                                            \
-        if ((temp_rc != RCL_RET_OK))                                                       \
-        {                                                                                  \
-            printf("Failed status on line %d: %d. Continuing.\n", __LINE__, (int)temp_rc); \
-        }                                                                                  \
+#define RCSOFTCHECK(fn)                                                                    
+    {                                                                                      
+        rcl_ret_t temp_rc = fn;                                                            
+        if ((temp_rc != RCL_RET_OK))                                                       
+        {                                                                                  
+            printf("Failed status on line %d: %d. Continuing.n", __LINE__, (int)temp_rc); 
+        }                                                                                  
     }
 #define MICRO_ROS_APP_STACK 16000
 #define MICRO_ROS_APP_TASK_PRIO 5
@@ -73,12 +73,12 @@ std_msgs__msg__Float32 position_msg;
 static rcl_publisher_t voltage_publisher;
 std_msgs__msg__Float32 voltage_msg;
 
-// Agregar después de las definiciones de TAG
 static adc_oneshot_unit_handle_t adc_handle = NULL;
 static const float MAX_VOLTAGE = 3.3f; // Voltaje máximo según ATTEN_DB_12
-static const int ADC_MAX_VALUE = 4095; // Resolución 12-bit
+float ADC_MAX_VALUE = 1; // Resolución 12-bit
+float ADC_MIN_VALUE = 4096; // Resolución 12-bit
 
-// En timer_callback, reemplaza la línea incompleta con:
+
 void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 {
     if (timer == NULL || adc_handle == NULL)
@@ -88,8 +88,6 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     float adc_accumulator = 0.0;
     (void)last_call_time;
 
-    // 1. Leer ADC
-    //
     for (int i=0; i<AVG_SAMPLES; i++) {
         esp_err_t adc_err = adc_oneshot_read(adc_handle, ADC_PIN, &adc_sample);
         if (adc_err != ESP_OK)
@@ -101,11 +99,18 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     }
     adc_accumulator = adc_accumulator/(float)AVG_SAMPLES;
 
+    if(ADC_MAX_VALUE < adc_accumulator){
+        ADC_MAX_VALUE = adc_accumulator
+    }
+    if(ADC_MIN_VALUE > adc_accumulator){
+        ADC_MIN_VALUE = adc_accumulator
+    }
+
     // 2. Calcular posición en porcentaje (0-100)
-    float posicion_porcentaje = (adc_accumulator / ADC_MAX_VALUE) * 100.0f;
+    float posicion_porcentaje = ((adc_accumulator - ADC_MIN_VALUE) / ADC_MAX_VALUE) * 100.0f;
 
     // 3. Calcular voltaje (0-3.3V)
-    float voltaje = (adc_accumulator / ADC_MAX_VALUE) * MAX_VOLTAGE;
+    float voltaje = ((adc_accumulator - ADC_MIN_VALUE) / ADC_MAX_VALUE) * MAX_VOLTAGE;
 
     // 4. Publicar posición
     position_msg.data = posicion_porcentaje;
@@ -115,8 +120,8 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     voltage_msg.data = voltaje;
     RCSOFTCHECK(rcl_publish(&voltage_publisher, &voltage_msg, NULL));
 
-    ESP_LOGI(TAG, "mean ADC: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
-             adc_accumulator, posicion_porcentaje, voltaje);
+    ESP_LOGI(TAG, "min: %.2f | mean ADC: %.2f | max: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
+             ADC_MIN_VALUE, adc_accumulator, ADC_MAX_VALUE, posicion_porcentaje, voltaje);
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
