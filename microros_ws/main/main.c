@@ -63,7 +63,7 @@
 #define ADC_PIN ADC_CHANNEL_7        // Channel 7 - Check ESP32 Pinout for the GPIO Number
 #define ADC_UNIT ADC_UNIT_1          // ADC1
 #define ADC_BITWIDTH ADC_BITWIDTH_12 // 12-bit resolution (0-4095)
-#define ADC_ATTEN ADC_ATTEN_DB_12    // ~3.3V full-scale voltage
+#define ADC_ATTEN ADC_ATTEN_DB_6    // ~3.3V full-scale voltage
 
 static const char *TAG = "micro_ros";
 
@@ -74,7 +74,7 @@ static rcl_publisher_t voltage_publisher;
 std_msgs__msg__Float32 voltage_msg;
 
 static adc_oneshot_unit_handle_t adc_handle = NULL;
-static const float MAX_VOLTAGE = 3.3f; // Voltaje máximo según ATTEN_DB_12
+static const float MAX_VOLTAGE = 2.2f; // Voltaje máximo según ATTEN_DB_12
 float ADC_MAX_VALUE = 1; // Resolución 12-bit
 float ADC_MIN_VALUE = 4096; // Resolución 12-bit
 
@@ -109,8 +109,8 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     // 2. Calcular posición en porcentaje (0-100)
     float posicion_porcentaje = ((adc_accumulator - ADC_MIN_VALUE) / ADC_MAX_VALUE) * 100.0f;
 
-    // 3. Calcular voltaje (0-3.3V)
-    float voltaje = ((adc_accumulator - ADC_MIN_VALUE) / ADC_MAX_VALUE) * MAX_VOLTAGE;
+    // 3. Calcular voltaje (0-2.2V)
+    float voltaje = adc_accumulator * (MAX_VOLTAGE/4096);
 
     // 4. Publicar posición
     position_msg.data = posicion_porcentaje;
