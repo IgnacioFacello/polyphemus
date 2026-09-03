@@ -5,7 +5,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "encoder.h"
 #include "esp_err.h"
 
 typedef struct encoder_dev_t *encoder_handle_t;

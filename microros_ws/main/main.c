@@ -284,5 +284,5 @@ void app_main(void)
                 MICRO_ROS_APP_STACK, NULL, MICRO_ROS_APP_TASK_PRIO, NULL);
 
     pot_deinit(potentiometer_h);
-    as5600_deinit(encoder_h)
+    as5600_deinit(encoder_h);
 }
