@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -13,11 +14,14 @@
 #include <esp_adc/adc_oneshot.h>
 #include "sdkconfig.h"
 
+#include "driver/potentiometer.h"
+#include "driver/as5600.h"
+
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
 #include <std_msgs/msg/float32.h>
-#include <std_msgs/msg/int64.h>
+#include <std_msgs/msg/int32.h>
 #include <geometry_msgs/msg/twist.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
@@ -54,74 +58,67 @@
 #define DOMAIN_ID 0
 #endif
 
-// #define ENCODER_GPIO_A 32
-// #define ENCODER_GPIO_B 33
-// #define ENCODER_PPR 600
-#define TIMER_PERIOD_MS 100 // Reducido de 400ms
-#define AVG_SAMPLES 75      // Numero de muestras por mensaje
-
-#define ADC_PIN ADC_CHANNEL_7        // Channel 7 - Check ESP32 Pinout for the GPIO Number
-#define ADC_UNIT ADC_UNIT_1          // ADC1
-#define ADC_BITWIDTH ADC_BITWIDTH_12 // 12-bit resolution (0-4095)
-#define ADC_ATTEN ADC_ATTEN_DB_6    // ~3.3V full-scale voltage
+#define TIMER_PERIOD_MS 100
 
 static const char *TAG = "micro_ros";
 
-static rcl_publisher_t position_publisher;
-std_msgs__msg__Float32 position_msg;
+// Global Handles
+static rcl_publisher_t poten_publisher;
+std_msgs__msg__Float32 poten_msg;
 
-static rcl_publisher_t voltage_publisher;
-std_msgs__msg__Float32 voltage_msg;
+static rcl_publisher_t encoder_publisher;
+std_msgs__msg__Int32 encoder_msg;
 
-static adc_oneshot_unit_handle_t adc_handle = NULL;
-static const float MAX_VOLTAGE = 2.2f; // Voltaje máximo según ATTEN_DB_12
-float ADC_MAX_VALUE = 1; // Resolución 12-bit
-float ADC_MIN_VALUE = 4096; // Resolución 12-bit
+static encoder_handle_t encoder_h;
+
+static pot_handle_t potentiometer_h;
+static pot_config_t poten_config = {
+    .unit = ADC_UNIT_1,
+    .channel = ADC_CHANNEL_7, // GPIO35
+    .bitwidth = ADC_BITWIDTH_12,
+    .atten = ADC_ATTEN_DB_6,
+    .max_voltage = 2.2f,
+    .avg_samples = 10,
+};
 
 
 void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 {
-    if (timer == NULL || adc_handle == NULL)
-        return;
+    float poten_percent = 0.0f;
+    int32_t encoder_count = 0.0f;
 
-    int adc_sample = 0;
-    float adc_accumulator = 0.0;
-    (void)last_call_time;
+    pot_update(potentiometer_h);
 
-    for (int i=0; i<AVG_SAMPLES; i++) {
-        esp_err_t adc_err = adc_oneshot_read(adc_handle, ADC_PIN, &adc_sample);
-        if (adc_err != ESP_OK)
-        {
-            ESP_LOGW(TAG, "ADC read failed: %d", adc_err);
-            return;
-        }
-        adc_accumulator += (float)adc_sample;
-    }
-    adc_accumulator = adc_accumulator/(float)AVG_SAMPLES;
+    as5600_get_angle(encoder_h, (uint16_t *)&encoder_count);
+    encoder_msg.data = encoder_count;
+    RCSOFTCHECK(rcl_publish(&encoder_publisher, &encoder_msg, NULL));
 
-    if(ADC_MAX_VALUE < adc_accumulator){
-        ADC_MAX_VALUE = adc_accumulator;
-    }
-    if(ADC_MIN_VALUE > adc_accumulator){
-        ADC_MIN_VALUE = adc_accumulator;
-    }
+    pot_get_percentage(potentiometer_h, &poten_percent);
+    poten_msg.data = poten_percent;
+    RCSOFTCHECK(rcl_publish(&poten_publisher, &poten_msg, NULL));
+}
 
-    // 2. Calcular posición en porcentaje (0-100)
-    float posicion_porcentaje = ((adc_accumulator - ADC_MIN_VALUE) / ADC_MAX_VALUE) * 100.0f;
+esp_err_t init_publishers(rcl_node_t *node)
+{
+    rcl_ret_t rc;
 
-    // 3. Calcular voltaje (0-2.2V)
-    float voltaje = adc_accumulator * (MAX_VOLTAGE/4096);
+    // Inicialización del publicador de posición
+    rc = rclc_publisher_init_default(
+        &poten_publisher,
+        node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+        "potentiometer"
+    );
 
-    // 4. Publicar posición
-    position_msg.data = posicion_porcentaje;
-    RCSOFTCHECK(rcl_publish(&position_publisher, &position_msg, NULL));
-
-    // 5. Publicar voltaje
-    voltage_msg.data = voltaje;
-    RCSOFTCHECK(rcl_publish(&voltage_publisher, &voltage_msg, NULL));
-
-    ESP_LOGI(TAG, "min: %.2f | mean ADC: %.2f | max: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
-             ADC_MIN_VALUE, adc_accumulator, ADC_MAX_VALUE, posicion_porcentaje, voltaje);
+    if (rc != RCL_RET_OK) { ESP_LOGE(TAG, "Failed to init potentiometer publisher: %d", rc); }
+    rc = rclc_publisher_init_default(
+        &encoder_publisher,
+        node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+        "encoder"
+    );
+    if (rc != RCL_RET_OK) { ESP_LOGE(TAG, "Failed to init encoder publisher: %d", rc); }
+    return rc;
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
@@ -212,29 +209,8 @@ void micro_ros_task(void *arg)
     ESP_LOGI(TAG, "Node created successfully");
 
     // Inicialización del publicador
-    rc = rclc_publisher_init_default(
-        &position_publisher,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-        "percentage_position");
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init position_publisher: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    rc = rclc_publisher_init_default(
-        &voltage_publisher,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-        "voltage");
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init voltage_publisher: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
+    rc = init_publishers(&node);
+    if (rc != RCL_RET_OK) { vTaskDelete(NULL); return; }
 
     // Inicialización del Timer
     rcl_timer_t timer = rcl_get_zero_initialized_timer();
@@ -290,7 +266,7 @@ void micro_ros_task(void *arg)
         usleep(10000);
     }
 
-    RCCHECK(rcl_publisher_fini(&position_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&poten_publisher, &node));
     RCCHECK(rcl_node_fini(&node));
     vTaskDelete(NULL);
 }
@@ -301,19 +277,12 @@ void app_main(void)
     ESP_ERROR_CHECK(uros_network_interface_initialize());
 #endif
 
-    // Configure ADC
-    adc_oneshot_unit_init_cfg_t init_config = {
-        .unit_id = ADC_UNIT,
-        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
-    };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
-
-    adc_oneshot_chan_cfg_t config = {
-        .bitwidth = ADC_BITWIDTH,
-        .atten = ADC_ATTEN,
-    };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_PIN, &config));
+    pot_init(&poten_config, &potentiometer_h);
+    as5600_init(&encoder_h);
 
     xTaskCreate(micro_ros_task, "micro_ros_task",
                 MICRO_ROS_APP_STACK, NULL, MICRO_ROS_APP_TASK_PRIO, NULL);
+
+    pot_deinit(potentiometer_h);
+    as5600_deinit(encoder_h)
 }
