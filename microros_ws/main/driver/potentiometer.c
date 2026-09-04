@@ -41,12 +41,13 @@ esp_err_t pot_init(const pot_config_t *config, pot_handle_t *out_handle)
     if (pot == NULL) {
         return ESP_ERR_NO_MEM;
     }
+    adc_oneshot_unit_handle_t adc_handle;
 
     adc_oneshot_unit_init_cfg_t init_config = {
         .unit_id = config->unit,
         .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
     };
-    esp_err_t err = adc_oneshot_new_unit(&init_config, &pot->adc_handle);
+    esp_err_t err = adc_oneshot_new_unit(&init_config, &adc_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create ADC unit: %d", err);
         free(pot);
@@ -57,21 +58,23 @@ esp_err_t pot_init(const pot_config_t *config, pot_handle_t *out_handle)
         .bitwidth = config->bitwidth,
         .atten = config->atten,
     };
-    err = adc_oneshot_config_channel(pot->adc_handle, config->channel, &chan_config);
+    err = adc_oneshot_config_channel(adc_handle, config->channel, &chan_config);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to configure ADC channel: %d", err);
-        adc_oneshot_del_unit(pot->adc_handle);
+        adc_oneshot_del_unit(adc_handle);
         free(pot);
         return err;
     }
 
-    pot->channel = config->channel;
+    pot->adc_handle = adc_handle;
+    pot->channel = ADC_CHANNEL_7;
+    ESP_LOGI(TAG, "channel set to %d at %p", pot->channel, (void*)&pot->channel);
     pot->avg_samples = config->avg_samples;
     pot->max_voltage = config->max_voltage;
     pot->bit_max = bitwidth_to_max(config->bitwidth);
     pot->accumulator = 0.0f;
-    pot->raw_min = pot->bit_max;
-    pot->raw_max = 0.0f;
+    pot->raw_min = 200.0f;
+    pot->raw_max = 3000.0f;
     pot->has_reading = false;
 
     *out_handle = pot;
