@@ -13,6 +13,10 @@ class SensorToJointState(Node):
         self.encoder = 0.0
         self.potentiometer = 0.0
 
+        # Definir límites según tu URDF
+        self.lens_lower_limit = -0.5236
+        self.lens_upper_limit = 1.5708
+
         self.create_subscription(
             Float32,
             '/polyphemus/encoder',
@@ -36,10 +40,16 @@ class SensorToJointState(Node):
         self.create_timer(0.1, self.publish_joint_state)
 
     def encoder_callback(self, message):
+        # Aquí podrías agregar límites para el encoder del body_u si los tuviera
         self.encoder = message.data
 
     def potentiometer_callback(self, message):
-        self.potentiometer = message.data
+        # Forzamos a que el valor del potenciómetro nunca rebase los límites del URDF
+        raw_value = message.data
+        self.potentiometer = max(
+            self.lens_lower_limit,
+            min(raw_value, self.lens_upper_limit)
+        )
 
     def publish_joint_state(self):
         message = JointState()
