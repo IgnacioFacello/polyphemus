@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "encoder.h"
+//#include "encoder.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/i2c_master.h"
@@ -88,6 +88,7 @@ esp_err_t as5600_get_two_bytes(
     ESP_ERROR_CHECK(as5600_get_byte(handle, reg_addr+0, &aux[0]));
     ESP_ERROR_CHECK(as5600_get_byte(handle, reg_addr+1, &aux[1]));
     *data = (aux[0] << 8) + aux[1];
+     return ESP_OK;
 }
 
 
@@ -203,7 +204,7 @@ esp_err_t add_device_to_bus(
 }
 
 
-esp_err_t encoder_init(encoder_handle_t * handle)
+esp_err_t as5600_init(encoder_handle_t * handle)
 {
     struct encoder_dev_t *enc = calloc(1, sizeof(struct encoder_dev_t));
     if (enc == NULL) {
