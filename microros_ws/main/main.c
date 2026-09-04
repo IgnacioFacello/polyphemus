@@ -21,7 +21,6 @@
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
 #include <std_msgs/msg/float32.h>
-#include <std_msgs/msg/int32.h>
 #include <geometry_msgs/msg/twist.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
@@ -60,6 +59,8 @@
 
 #define TIMER_PERIOD_MS 100
 
+#define PI 3.14
+
 static const char *TAG = "micro_ros";
 
 // Global Handles
@@ -67,7 +68,7 @@ static rcl_publisher_t poten_publisher;
 std_msgs__msg__Float32 poten_msg;
 
 static rcl_publisher_t encoder_publisher;
-std_msgs__msg__Int32 encoder_msg;
+std_msgs__msg__Float32 encoder_msg;
 
 static encoder_handle_t encoder_h;
 
@@ -85,23 +86,34 @@ static pot_config_t pot_cfg = {
 void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 {
     float poten_percent = 0.0f;
+    float poten_rad = 0.0f;
     int32_t encoder_count = 0;
+    float encoder_rad = 0.0f;
+
+    uint8_t enc_status = 0x00;
 
     if (pot_handle != NULL)
     {
         pot_update(pot_handle);
         pot_get_percentage(pot_handle, &poten_percent);
-        poten_msg.data = poten_percent;
+        poten_rad = (poten_percent/100.0) * 2*PI;
+        poten_msg.data = poten_rad;
         RCSOFTCHECK(rcl_publish(&poten_publisher, &poten_msg, NULL));
     }
 
     if (encoder_h != NULL) {
-        as5600_get_angle(encoder_h, (uint16_t *)&encoder_count);
-        encoder_msg.data = encoder_count;
-        RCSOFTCHECK(rcl_publish(&encoder_publisher, &encoder_msg, NULL));
+        as5600_get_status(encoder_h, &enc_status);
+        if (enc_status & 0x20) {
+            as5600_get_angle(encoder_h, (uint16_t *)&encoder_count);
+            encoder_rad = ((float)encoder_count/4095) * 2*PI;
+            encoder_msg.data = encoder_rad;
+            RCSOFTCHECK(rcl_publish(&encoder_publisher, &encoder_msg, NULL));
+        } else {
+            as5600_check_status(enc_status);
+        }
     }
 
-    ESP_LOGI(TAG, "Potentiometer: %.2f%%, Encoder: %d", poten_percent, encoder_count);
+    ESP_LOGI(TAG, "Potentiometer: %.2f, Encoder: %.2f", poten_rad, encoder_rad);
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
@@ -209,7 +221,7 @@ void micro_ros_task(void *arg)
     rc = rclc_publisher_init_default(
         &encoder_publisher,
         &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
         "encoder"
     );
     if (rc != RCL_RET_OK) {
@@ -268,6 +280,9 @@ void micro_ros_task(void *arg)
 
     pot_init(&pot_cfg, &pot_handle);
     as5600_init(&encoder_h);
+    set_start_pos(encoder_h, 1255);
+    set_stop_pos(encoder_h, 1254);
+    //set_max_angle(encoder_h, 4095);
 
     while (1)
     {

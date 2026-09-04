@@ -151,7 +151,7 @@ esp_err_t pot_get_percentage(pot_handle_t handle, float *out_percentage)
         return ESP_OK;
     }
 
-    float percentage = ((handle->accumulator - handle->raw_min) / range) * 100.0f;
+    float percentage = ((handle->accumulator - (handle->raw_min)) / range) * 100.0f;
     if (percentage < 0.0f) percentage = 0.0f;
     if (percentage > 100.0f) percentage = 100.0f;
 

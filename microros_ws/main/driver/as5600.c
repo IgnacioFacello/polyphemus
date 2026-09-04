@@ -87,8 +87,8 @@ esp_err_t as5600_get_two_bytes(
     uint16_t * data
 ){
     uint8_t aux[2];
-    ESP_ERROR_CHECK(as5600_get_byte(handle, reg_addr+0, &aux[0]));
-    ESP_ERROR_CHECK(as5600_get_byte(handle, reg_addr+1, &aux[1]));
+    as5600_get_byte(handle, reg_addr+0, &aux[0]);
+    as5600_get_byte(handle, reg_addr+1, &aux[1]);
     *data = (aux[0] << 8) + aux[1];
     return ESP_OK;
 }
@@ -220,7 +220,7 @@ esp_err_t as5600_init(encoder_handle_t * handle)
         .scl_io_num = I2C_MASTER_SCL_IO,        // GPIO 22 por default
         .clk_source = I2C_CLK_SRC_DEFAULT,      // Fuente del tick de reloj
         .glitch_ignore_cnt = 7,                 //
-        .flags.enable_internal_pullup = false,
+        .flags.enable_internal_pullup = false,   // Debería ser false
     };
     i2c_master_dev_handle_t dev_handle;
     i2c_device_config_t dev_config = {
