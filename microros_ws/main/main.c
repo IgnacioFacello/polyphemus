@@ -3,28 +3,26 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_system.h"
 #include "esp_err.h"
-#include "driver/gpio.h"
-#include <esp_adc/adc_oneshot.h>
+#include "esp_system.h"
+#include "driver/uart.h"
 #include "sdkconfig.h"
 
-#include "driver/potentiometer.h"
-#include "driver/as5600.h"
 
-#include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
 #include <std_msgs/msg/float32.h>
 #include <std_msgs/msg/int32.h>
-#include <geometry_msgs/msg/twist.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
+
+#include "driver/potentiometer.h"
+#include "driver/as5600.h"
+#include "esp32_serial_transport.h"
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 #include <rmw_microros/rmw_microros.h>
@@ -89,8 +87,8 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 
     pot_update(potentiometer_h);
 
-    as5600_get_angle(encoder_h, (uint16_t *)&encoder_count);
-    encoder_msg.data = encoder_count;
+    //as5600_get_angle(encoder_h, (uint16_t *)&encoder_count);
+    encoder_msg.data = 0; //encoder_count;
     RCSOFTCHECK(rcl_publish(&encoder_publisher, &encoder_msg, NULL));
 
     pot_get_percentage(potentiometer_h, &poten_percent);
@@ -153,21 +151,6 @@ void micro_ros_task(void *arg)
         return;
     }
 
-#ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
-    rmw_init_options_t *rmw_options = rcl_init_options_get_rmw_init_options(&init_options);
-    rc = rmw_uros_options_set_udp_address(CONFIG_MICRO_ROS_AGENT_IP,
-                                          CONFIG_MICRO_ROS_AGENT_PORT,
-                                          rmw_options);
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to set UDP address: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "UDP configured: %s:%s", CONFIG_MICRO_ROS_AGENT_IP,
-             CONFIG_MICRO_ROS_AGENT_PORT);
-#endif
-
     // Retry loop for rclc_support_init
     while (retry_count < MAX_RETRIES)
     {
@@ -199,7 +182,7 @@ void micro_ros_task(void *arg)
     }
 
     rcl_node_t node = rcl_get_zero_initialized_node();
-    rc = rclc_node_init_default(&node, "microros_node", MICROROS_NAMESPACE, &support);
+    rc = rclc_node_init_default(&node, "polyphemus_node", MICROROS_NAMESPACE, &support);
     if (rc != RCL_RET_OK)
     {
         ESP_LOGE(TAG, "Failed to init node: %d", rc);
@@ -271,18 +254,33 @@ void micro_ros_task(void *arg)
     vTaskDelete(NULL);
 }
 
+static size_t uart_port = UART_NUM_0;
+
 void app_main(void)
 {
-#if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
-    ESP_ERROR_CHECK(uros_network_interface_initialize());
-#endif
+#if defined(RMW_UXRCE_TRANSPORT_CUSTOM)
+	rmw_uros_set_custom_transport(
+		true,
+		(void *) &uart_port,
+		esp32_serial_open,
+		esp32_serial_close,
+		esp32_serial_write,
+		esp32_serial_read
+	);
+#endif  // RMW_UXRCE_TRANSPORT_CUSTOM
+
+    esp_log_level_set("*", ESP_LOG_NONE);
 
     pot_init(&poten_config, &potentiometer_h);
-    as5600_init(&encoder_h);
+    //as5600_init(&encoder_h);
 
-    xTaskCreate(micro_ros_task, "micro_ros_task",
-                MICRO_ROS_APP_STACK, NULL, MICRO_ROS_APP_TASK_PRIO, NULL);
+    xTaskCreate(micro_ros_task,
+        "micro_ros_task",
+        MICRO_ROS_APP_STACK,
+        NULL,
+        MICRO_ROS_APP_TASK_PRIO,
+        NULL);
 
     pot_deinit(potentiometer_h);
-    as5600_deinit(encoder_h);
+    //as5600_deinit(encoder_h);
 }
