@@ -280,8 +280,8 @@ void micro_ros_task(void *arg)
 
     pot_init(&pot_cfg, &pot_handle);
     as5600_init(&encoder_h);
-    set_start_pos(encoder_h, 1255);
-    set_stop_pos(encoder_h, 1254);
+    set_start_pos(encoder_h, 3569);
+    //set_stop_pos(encoder_h, 4095);
     //set_max_angle(encoder_h, 4095);
 
     while (1)
