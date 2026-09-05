@@ -1,9 +1,9 @@
 # polyphemus
 ## Integrantes
-Ignacio Facello
-Lucia Lazlo
-Micaela Grande
-Natasha ???
+- Facello Ignacio 
+- Grande Micaela 
+- Laszlo Lucia 
+- Vodanovich Natasha 
 
 ## How To Run
 1. Lanzar el agente de micro-ros 
