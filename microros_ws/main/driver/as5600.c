@@ -96,11 +96,11 @@ esp_err_t as5600_get_two_bytes(
 
 bool as5600_write_conf(encoder_handle_t handle, uint8_t addr, uint16_t data){
     esp_err_t err;
-    err = write_byte(handle, addr+0, data & 0xFF);
-    // xxxxxxxx WWWWWWWW
-    if ( err != ESP_OK ) { return false; }
-    err = write_byte(handle, addr+1, data >> 8);
+    err = write_byte(handle, addr+0, data >> 8);
     // WWWWWWWW xxxxxxxx
+    if ( err != ESP_OK ) { return false; }
+    err = write_byte(handle, addr+1, data & 0xFF);
+    // xxxxxxxx WWWWWWWW
     if ( err != ESP_OK ) { return false; }
     return true;
 }

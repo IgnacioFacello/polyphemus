@@ -1,9 +1,9 @@
 # polyphemus
 ## Integrantes
-Ignacio Facello
-Lucia Lazlo
-Micaela Grande
-Natasha ???
+- Facello Ignacio 
+- Grande Micaela 
+- Laszlo Lucia 
+- Vodanovich Natasha 
 
 ## How To Run
 1. Lanzar el agente de micro-ros 
@@ -16,7 +16,7 @@ ros2 launch bot_bringup bot_app.launch.xml
 
 3. Buildear el cliente de microros con el namespace correcto
 ```bash
-MICROROS_NAMESPACE="ifacello" idf.py build 
+MICROROS_NAMESPACE="polyphemus" idf.py build 
 ```
 
 4. Flashear el microcontrolador

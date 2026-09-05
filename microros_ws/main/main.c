@@ -49,9 +49,9 @@
 #define MICRO_ROS_APP_STACK 16000
 #define MICRO_ROS_APP_TASK_PRIO 5
 
-#ifndef MICROROS_NAMESPACE
-#define MICROROS_NAMESPACE ""
-#endif
+//#ifndef MICROROS_NAMESPACE
+#define MICROROS_NAMESPACE "polyphemus"
+//#endif
 
 #ifndef DOMAIN_ID
 #define DOMAIN_ID 0
@@ -87,7 +87,8 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 {
     float poten_percent = 0.0f;
     float poten_rad = 0.0f;
-    int32_t encoder_count = 0;
+    uint16_t encoder_count = 0;
+    uint16_t encoder_raw = 0;
     float encoder_rad = 0.0f;
 
     uint8_t enc_status = 0x00;
@@ -104,7 +105,9 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
     if (encoder_h != NULL) {
         as5600_get_status(encoder_h, &enc_status);
         if (enc_status & 0x20) {
-            as5600_get_angle(encoder_h, (uint16_t *)&encoder_count);
+            as5600_get_angle(encoder_h, &encoder_count);
+            as5600_get_raw_angle(encoder_h, &encoder_raw);
+            ESP_LOGI(TAG, "Encoder count: %d, raw: %d", encoder_count, encoder_raw);
             encoder_rad = ((float)encoder_count/4095) * 2*PI;
             encoder_msg.data = encoder_rad;
             RCSOFTCHECK(rcl_publish(&encoder_publisher, &encoder_msg, NULL));
@@ -113,7 +116,7 @@ void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
         }
     }
 
-    ESP_LOGI(TAG, "Potentiometer: %.2f, Encoder: %.2f", poten_rad, encoder_rad);
+    //ESP_LOGI(TAG, "Potentiometer: %.2f, Encoder: %.2f", poten_rad, encoder_rad);
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
@@ -280,8 +283,8 @@ void micro_ros_task(void *arg)
 
     pot_init(&pot_cfg, &pot_handle);
     as5600_init(&encoder_h);
-    set_start_pos(encoder_h, 1255);
-    set_stop_pos(encoder_h, 1254);
+    set_start_pos(encoder_h, 3569);
+    //set_stop_pos(encoder_h, 4095);
     //set_max_angle(encoder_h, 4095);
 
     while (1)

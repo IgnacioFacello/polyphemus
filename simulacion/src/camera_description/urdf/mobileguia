@@ -1,0 +1,176 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro"> <!--esto es lo que "activa" el vocabulario de Xacro-->
+
+  <!-- Parámetros generales -->
+  <xacro:arg name="package_name" default="my_robot_description"/>  
+  <xacro:arg name="mesh_dir" default="meshes"/>
+
+  <!-- Escala global del modelo CAD exportado desde SolidWorks -->
+  <xacro:property name="global_scale" value="1.0"/>
+
+  <!-- Base -->
+  <xacro:property name="base_mesh" value="base_link.STL"/> <!--guarda el nombre del archivo 3D de la base
+  (un .STL, que es un formato estándar de mallas 3D, típico de exportar desde programas CAD como SolidWorks)-->
+  <xacro:property name="base_scale" value="${global_scale} ${global_scale} ${global_scale}"/>
+  <xacro:property name="base_visual_xyz" value="0 0 0"/>
+  <xacro:property name="base_visual_rpy" value="0 0 0"/>
+
+  <!-- Rueda izquierda -->
+  <xacro:property name="left_wheel_mesh" value="Rueda_izquierda_link.STL"/>
+  <xacro:property name="left_wheel_scale" value="${global_scale} ${global_scale} ${global_scale}"/>
+  <xacro:property name="left_wheel_xyz" value="-0.033259 0.08025 -0.01375"/> <!--posición de la rueda respecto a la base-->
+  <xacro:property name="left_wheel_rpy" value="0 0 0"/> <!--rotación de la rueda respecto a la base-->
+  <xacro:property name="left_wheel_axis" value="0 1 0"/> <!--eje de giro de la rueda. 0 1 0 significa "gira sobre el eje Y".
+  Una rueda de robot diferencial gira sobre el eje que atraviesa su centro, como un disco.-->
+  <xacro:property name="left_wheel_visual_xyz" value="0 0 0"/>
+  <xacro:property name="left_wheel_visual_rpy" value="-1.5708 0.042481 0"/>
+
+  <!-- Rueda derecha, falta visual xyz, rpy -->
+  <xacro:property name="right_wheel_mesh" value="Rueda_derecha_link.STL"/>
+  <xacro:property name="right_wheel_scale" value="${global_scale} ${global_scale} ${global_scale}"/>
+  <xacro:property name="right_wheel_xyz" value="-0.033259 -0.08025 -0.01375"/>
+  <xacro:property name="right_wheel_rpy" value="0 0 0"/>
+  <xacro:property name="right_wheel_axis" value="0 1 0"/>
+
+  <!-- Soporte castor-->
+  <xacro:property name="castor_base_mesh" value="Base_castor_link.STL"/>
+  <xacro:property name="castor_base_scale" value="${global_scale} ${global_scale} ${global_scale}"/>
+  <xacro:property name="castor_base_xyz" value="0.072581 0 -0.0025"/>
+  <xacro:property name="castor_base_rpy" value="3.14 3.14 3.14"/>
+  <xacro:property name="castor_base_axis" value="0 0 1"/>
+  <xacro:property name="castor_base_visual_rpy" value="3.14 0 3.14"/>
+
+  <!-- Rueda castor -->
+  <xacro:property name="castor_wheel_mesh" value="Rueda_castor_link.STL"/>
+  <xacro:property name="castor_wheel_scale" value="${global_scale+0.5} ${global_scale+0.5} ${global_scale}"/>
+  <xacro:property name="castor_wheel_xyz" value="-0.015014 -0.00012272 -0.02296"/>
+  <xacro:property name="castor_wheel_rpy" value="3.14 3.14 -3.14"/>
+  <xacro:property name="castor_wheel_axis" value="0 1 0"/>
+  <xacro:property name="castor_wheel_visual_xyz" value="0 0 0"/> <!--el visual queda centrado, NO se toca para mover la pieza-->
+  <xacro:property name="castor_wheel_visual_rpy" value="-1.5708 0 0"/>
+
+  <!-- Parámetros geométricos de referencia para usar en control/TF -->
+  <!-- No se usan explicitamente, pero sirven para dejar documentadas las dimensiones principales -->
+  <xacro:property name="wheel_separation" value="0.1605"/>
+  <xacro:property name="wheel_radius" value="0.033"/>
+  <xacro:property name="robot_length" value="0.185"/>
+  <xacro:property name="robot_width" value="0.145"/>
+  <xacro:property name="robot_height" value="0.050"/>
+
+  <!-- Macros auxiliares -->
+  <!-- Link tipo caja -->
+  <xacro:macro name="mesh_link_box" params="name mesh scale visual_rpy">
+    <link name="${name}">
+
+      <visual>
+        <origin xyz="${base_visual_xyz}" rpy="${visual_rpy}"/>
+        <geometry>
+          <mesh filename="package://$(arg package_name)/$(arg mesh_dir)/${mesh}" scale="${scale}"/>
+        </geometry>
+        <material name="blue"/>
+      </visual>
+
+    </link>
+  </xacro:macro>
+
+  <!-- Link tipo esfera -->
+  <xacro:macro name="mesh_link_sphere" params="name mesh scale">
+    <link name="${name}">
+
+      <visual>
+        <origin xyz="${left_wheel_visual_xyz}" rpy="${left_wheel_visual_rpy}"/>
+        <geometry>
+          <mesh filename="package://$(arg package_name)/$(arg mesh_dir)/${mesh}" scale="${scale}"/>
+        </geometry>
+        <material name="grey"/>
+      </visual>
+
+    </link>
+  </xacro:macro>
+
+  <!-- Completar Macro-Link caja castor -->
+  <!-- (tu amiga reutiliza mesh_link_box, no hizo falta una nueva) -->
+
+  <!-- Completar Macro-Link rueda castor-->
+  <xacro:macro name="mesh_link_sphere_castor" params="name mesh scale">
+    <link name="${name}">
+      <visual>
+        <origin xyz="${castor_wheel_visual_xyz}" rpy="${castor_wheel_visual_rpy}"/>
+        <geometry>
+          <mesh filename="package://$(arg package_name)/$(arg mesh_dir)/${mesh}" scale="${scale}"/>
+        </geometry>
+        <material name="grey"/>
+      </visual>
+    </link>
+  </xacro:macro>
+
+
+  <!-- Instancia de Macros-links -->
+  <link name="base_footprint" />
+
+  <xacro:mesh_link_box
+    name="base_link"
+    mesh="${base_mesh}"
+    scale="${base_scale}"
+    visual_rpy="${base_visual_rpy}"/>
+
+  <xacro:mesh_link_box
+    name="castor_base_link"
+    mesh="${castor_base_mesh}"
+    scale="${castor_base_scale}"
+    visual_rpy="${castor_base_visual_rpy}"/>
+
+  <xacro:mesh_link_sphere
+    name="Rueda_izquierda_link"
+    mesh="${left_wheel_mesh}"
+    scale="${left_wheel_scale}"/>
+
+  <xacro:mesh_link_sphere
+    name="Rueda_derecha_link"
+    mesh="${right_wheel_mesh}"
+    scale="${right_wheel_scale}"/>
+
+  <!-- Completar Instancia Link rueda castor-->
+  <xacro:mesh_link_sphere_castor
+    name="Rueda_castor_link"
+    mesh="${castor_wheel_mesh}"
+    scale="${castor_wheel_scale}"/>
+
+
+  <!-- Joints -->
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0.04675" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="Rueda_izquierda_joint" type="continuous">
+    <origin xyz="${left_wheel_xyz}" rpy="${left_wheel_rpy}"/>
+    <parent link="base_link"/>
+    <child link="Rueda_izquierda_link"/>
+    <axis xyz="${left_wheel_axis}"/>
+  </joint>
+
+  <joint name="Rueda_derecha_joint" type="continuous">
+    <origin xyz="${right_wheel_xyz}" rpy="${right_wheel_rpy}"/>
+    <parent link="base_link"/>
+    <child link="Rueda_derecha_link"/>
+    <axis xyz="${right_wheel_axis}"/>
+  </joint>
+
+  <!-- Completar Joint Base_castor_link>base_link-->
+  <joint name="castor_base_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="castor_base_link" />
+    <origin xyz="${castor_base_xyz}" rpy="${castor_base_rpy}" />
+  </joint>
+
+  <!-- Compĺetar Joint rueda_castor_link>Base_castor_link-->
+  <joint name="Rueda_castor_joint" type="continuous">
+    <origin xyz="${castor_wheel_xyz}" rpy="${castor_wheel_rpy}"/>
+    <parent link="castor_base_link"/>
+    <child link="Rueda_castor_link"/>
+    <axis xyz="${castor_wheel_axis}"/>
+  </joint>
+
+</robot>
