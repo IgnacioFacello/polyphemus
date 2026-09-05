@@ -49,9 +49,9 @@
 #define MICRO_ROS_APP_STACK 16000
 #define MICRO_ROS_APP_TASK_PRIO 5
 
-#ifndef MICROROS_NAMESPACE
-#define MICROROS_NAMESPACE ""
-#endif
+//#ifndef MICROROS_NAMESPACE
+#define MICROROS_NAMESPACE "polyphemus"
+//#endif
 
 #ifndef DOMAIN_ID
 #define DOMAIN_ID 0
