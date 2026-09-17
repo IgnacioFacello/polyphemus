@@ -21,6 +21,9 @@ class RotationPublisher(Node):
 )
         print(f"Valores ingresados: {angulos[0]},  {angulos[1]},  {angulos[2]}")
         
+        paso = input("Ingrese la cantidad de paso:")
+        print("La cantidad de paso es:", paso)
+        
         msg =Float32MultiArray()
         msg.data = vector + angulos
         

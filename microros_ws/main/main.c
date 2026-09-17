@@ -54,7 +54,7 @@
 // Tamaño del array de entrada: 3 componentes de vector + 3 ángulos.
 // Si más adelante necesitás más datos (ej. un cuarto ángulo, o un segundo vector),
 // solo cambiá este número.
-#define ROTATION_INPUT_SIZE 6
+#define ROTATION_INPUT_SIZE 7
 #define ROTATION_OUTPUT_SIZE 3 // vector resultado (x, y, z)
 
 static const char *TAG = "micro_ros";
@@ -90,9 +90,10 @@ void rotation_callback(const void *msgin)
     float angulo_x = msg->data.data[3];
     float angulo_y = msg->data.data[4];
     float angulo_z = msg->data.data[5];
+    int pasos = msg->data.data[6]
 
-    ESP_LOGI(TAG, "Recibido vector: (%.3f, %.3f, %.3f) angulos: (%.3f, %.3f, %.3f)",
-             x, y, z, angulo_x, angulo_y, angulo_z);
+    ESP_LOGI(TAG, "Recibido vector: (%.3f, %.3f, %.3f) angulos: (%.3f, %.3f, %.3f) pasos: %d" , 
+             x, y, z, angulo_x, angulo_y, angulo_z, pasos);
 
    // ACA poner codigo de rotacion
 
