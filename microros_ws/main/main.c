@@ -67,6 +67,17 @@ static std_msgs__msg__Float32MultiArray vector_rotado_msg;
 static rcl_subscription_t rotation_sub;
 static std_msgs__msg__Float32MultiArray rotation_msg;
 
+float pi = acos(-1.0);
+
+void multiplicar_matriz_vector(float M[3][3], float V[3], float salida[3]) {
+    for (int i = 0; i < 3; i++) {
+        salida[i] = 0.0;
+        for (int j = 0; j < 3; j++) {
+            salida[i] += M[i][j] * V[j];
+        }
+    }
+}
+
 /**
  * Se ejecuta automáticamente cada vez que llega un mensaje nuevo al tópico
  * "rotation_input". El middleware ya dejó los datos recibidos escritos
@@ -87,16 +98,76 @@ void rotation_callback(const void *msgin)
     float x = msg->data.data[0];
     float y = msg->data.data[1];
     float z = msg->data.data[2];
-    float angulo_x = msg->data.data[3];
-    float angulo_y = msg->data.data[4];
-    float angulo_z = msg->data.data[5];
-    uint16_t pasos = (uint16_t) msg->data.data[6];
+    float alfa_deg = msg->data.data[3];
+    float beta_deg = msg->data.data[4];
+    float sigma_deg = msg->data.data[5];
+    int cantidad = (int) msg->data.data[6];
 
-    ESP_LOGI(TAG, "Recibido vector: (%.3f, %.3f, %.3f) angulos: (%.3f, %.3f, %.3f) pasos: %d" , 
-             x, y, z, angulo_x, angulo_y, angulo_z, pasos);
+    ESP_LOGI(TAG, "Recibido vector: (%.3f, %.3f, %.3f) angulos: (%.3f, %.3f, %.3f) pasos: %d" ,
+             x, y, z, alfa_deg, beta_deg, sigma_deg, cantidad);
 
    // ACA poner codigo de rotacion
 
+   float paso_g = sigma_deg / cantidad; // Paso de microrotación en grados
+
+   float deg_to_rad = pi/180.0;
+   float alfa = alfa_deg * deg_to_rad;
+   float beta = beta_deg * deg_to_rad;
+   float fi = sigma_deg * deg_to_rad;
+   float paso = paso_g * deg_to_rad;
+
+   // Componentes del eje de rotación
+   float nx = sin(beta) * cos(alfa);
+   float ny = sin(beta) * sin(alfa);
+   float nz = cos(beta);
+   float cosfi = cos(fi);
+   float sinfi = sin(fi);
+
+   // Vector que queremos rotar
+   float V[3] = {x, y, z};
+
+   // Matriz para rotación total
+   float M1[3][3] = {
+       {
+           nx * nx + (1.0 - nx * nx) * cosfi,
+           nx * ny * (1.0 - cosfi) + nz * sinfi,
+           nx * nz * (1.0 - cosfi) - ny * sinfi
+       },
+       {
+           nx * ny * (1.0 - cosfi) - nz * sinfi,
+           ny * ny + (1.0 - ny * ny) * cosfi,
+           ny * nz * (1.0 - cosfi) + nx * sinfi
+       },
+       {
+           nx * nz * (1.0 - cosfi) + ny * sinfi,
+           ny * nz * (1.0 - cosfi) - nx * sinfi,
+           nz * nz + (1.0 - nz * nz) * cosfi
+       }
+   };
+
+   // Matriz de rotación simplificada MICRO ROTACION
+   float M_micro[3][3] = {
+       {1.0,       nz * paso, -ny * paso},
+       {-nz * paso, 1.0,       nx * paso},
+       {ny * paso, -nx * paso, 1.0}
+   };
+
+   float V_micro[3] = {V[0], V[1], V[2]};
+   float temp[3];
+
+   for (int i = 0; i < cantidad; i++) {
+       multiplicar_matriz_vector(M_micro, V_micro, temp);
+
+       V_micro[0] = temp[0];
+       V_micro[1] = temp[1];
+       V_micro[2] = temp[2];
+   }
+
+   // Rotamos el vector de forma exacta
+   float V_rotado_exacto[3];
+   multiplicar_matriz_vector(M1, V, V_rotado_exacto);
+
+   //
     vector_rotado_msg.data.data[0] = x;
     vector_rotado_msg.data.data[1] = y;
     vector_rotado_msg.data.data[2] = z;
