@@ -20,13 +20,13 @@ class RotationPublisher(Node):
             "Ingresa tres angulos separados por espacio: ").split())
 )
         print(f"Valores ingresados: {angulos[0]},  {angulos[1]},  {angulos[2]}")
-        
-        paso = input("Ingrese la cantidad de paso:")
+
+        paso = float(input("Ingrese la cantidad de paso:"))
         print("La cantidad de paso es:", paso)
-        
+
         msg =Float32MultiArray()
-        msg.data = vector + angulos
-        
+        msg.data = vector + angulos + [paso]
+
         self.publisher_.publish(msg)
 
 
