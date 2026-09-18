@@ -90,7 +90,7 @@ void rotation_callback(const void *msgin)
     float angulo_x = msg->data.data[3];
     float angulo_y = msg->data.data[4];
     float angulo_z = msg->data.data[5];
-    int pasos = msg->data.data[6]
+    uint16_t pasos = (uint16_t) msg->data.data[6];
 
     ESP_LOGI(TAG, "Recibido vector: (%.3f, %.3f, %.3f) angulos: (%.3f, %.3f, %.3f) pasos: %d" , 
              x, y, z, angulo_x, angulo_y, angulo_z, pasos);
