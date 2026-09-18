@@ -55,7 +55,7 @@
 // Si más adelante necesitás más datos (ej. un cuarto ángulo, o un segundo vector),
 // solo cambiá este número.
 #define ROTATION_INPUT_SIZE 7
-#define ROTATION_OUTPUT_SIZE 3 // vector resultado (x, y, z)
+#define ROTATION_OUTPUT_SIZE 6 // vector resultado ((x, y, z), (x, y, z))
 
 static const char *TAG = "micro_ros";
 
@@ -98,6 +98,9 @@ void rotation_callback(const void *msgin)
     float x = msg->data.data[0];
     float y = msg->data.data[1];
     float z = msg->data.data[2];
+    // Vector que queremos rotar
+    float V[3] = {x, y, z};
+
     float alfa_deg = msg->data.data[3];
     float beta_deg = msg->data.data[4];
     float sigma_deg = msg->data.data[5];
@@ -122,9 +125,6 @@ void rotation_callback(const void *msgin)
    float nz = cos(beta);
    float cosfi = cos(fi);
    float sinfi = sin(fi);
-
-   // Vector que queremos rotar
-   float V[3] = {x, y, z};
 
    // Matriz para rotación total
    float M1[3][3] = {
@@ -168,9 +168,12 @@ void rotation_callback(const void *msgin)
    multiplicar_matriz_vector(M1, V, V_rotado_exacto);
 
    //
-    vector_rotado_msg.data.data[0] = x;
-    vector_rotado_msg.data.data[1] = y;
-    vector_rotado_msg.data.data[2] = z;
+    vector_rotado_msg.data.data[0] = V_rotado_exacto[0];
+    vector_rotado_msg.data.data[1] = V_rotado_exacto[1];
+    vector_rotado_msg.data.data[2] = V_rotado_exacto[2];
+    vector_rotado_msg.data.data[3] = V_micro[0];
+    vector_rotado_msg.data.data[4] = V_micro[1];
+    vector_rotado_msg.data.data[5] = V_micro[2];
 
     RCSOFTCHECK(rcl_publish(&vector_rotado_pub, &vector_rotado_msg, NULL));
 }
