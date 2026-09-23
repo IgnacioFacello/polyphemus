@@ -3,7 +3,7 @@
 Ignacio Facello
 Lucia Lazlo
 Micaela Grande
-Natasha ???
+Natasha Vodanovich
 
 ## How To Run
 1. Lanzar el agente de micro-ros 
