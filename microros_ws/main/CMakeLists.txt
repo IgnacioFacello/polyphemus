@@ -1,5 +1,5 @@
 idf_component_register(
-  SRCS "main.c" "driver/as5600.c" "driver/potentiometer.c"
+  SRCS "main.c"
   INCLUDE_DIRS "."
   PRIV_REQUIRES
     micro_ros_espidf_component
@@ -12,3 +12,4 @@ idf_component_register(
 )
 
 target_link_libraries(${COMPONENT_LIB} PRIVATE m)
+set(EXTRA_COMPONENT_DIRS "./components")

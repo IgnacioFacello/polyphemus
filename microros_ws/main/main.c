@@ -12,11 +12,14 @@
 #include "sdkconfig.h"
 
 #include <uros_network_interfaces.h>
+
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
 #include <std_msgs/msg/float32_multi_array.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
+
+#include <custom_interfaces/srv/vector_rotate.h>
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 #include <rmw_microros/rmw_microros.h>
@@ -51,21 +54,8 @@
 #define DOMAIN_ID 0
 #endif
 
-// Tamaño del array de entrada: 3 componentes de vector + 3 ángulos.
-// Si más adelante necesitás más datos (ej. un cuarto ángulo, o un segundo vector),
-// solo cambiá este número.
-#define ROTATION_INPUT_SIZE 7
-#define ROTATION_OUTPUT_SIZE 6 // vector resultado ((x, y, z), (x, y, z))
 
 static const char *TAG = "micro_ros";
-
-// Publisher: publica el vector ya rotado
-static rcl_publisher_t vector_rotado_pub;
-static std_msgs__msg__Float32MultiArray vector_rotado_msg;
-
-// Subscriber: recibe vector + ángulos a aplicar
-static rcl_subscription_t rotation_sub;
-static std_msgs__msg__Float32MultiArray rotation_msg;
 
 float pi = acos(-1.0);
 
@@ -78,104 +68,93 @@ void multiplicar_matriz_vector(float M[3][3], float V[3], float salida[3]) {
     }
 }
 
-/**
- * Se ejecuta automáticamente cada vez que llega un mensaje nuevo al tópico
- * "rotation_input". El middleware ya dejó los datos recibidos escritos
- * dentro de rotation_msg.data.data antes de llamar a esta función.
- */
-void rotation_callback(const void *msgin)
-{
-    const std_msgs__msg__Float32MultiArray *msg =
-        (const std_msgs__msg__Float32MultiArray *)msgin;
+void service_callback(const void * req, void * res){
+  custom_interfaces__srv__VectorRotate_Request * req_in = (custom_interfaces__srv__VectorRotate_Request *) req;
+  custom_interfaces__srv__VectorRotate_Response * res_in = (custom_interfaces__srv__VectorRotate_Response *) res;
 
-    if (msg->data.size < ROTATION_INPUT_SIZE)
-    {
-        ESP_LOGW(TAG, "Mensaje recibido con tamaño inesperado: %d (esperado %d)",
-                 (int)msg->data.size, ROTATION_INPUT_SIZE);
-        return;
-    }
 
-    float x = msg->data.data[0];
-    float y = msg->data.data[1];
-    float z = msg->data.data[2];
-    // Vector que queremos rotar
-    float V[3] = {x, y, z};
+  float x = (float) req_in->x;
+  float y = (float) req_in->y;
+  float z = (float) req_in->z;
+  // Vector que queremos rotar
+  float V[3] = {x, y, z};
 
-    float alfa_deg = msg->data.data[3];
-    float beta_deg = msg->data.data[4];
-    float sigma_deg = msg->data.data[5];
-    int cantidad = (int) msg->data.data[6];
+  float alpha_deg = (float) req_in->alpha;
+  float beta_deg = (float) req_in->beta;
+  float phi_deg = (float) req_in->phi;
 
-    ESP_LOGI(TAG, "Recibido vector: (%.3f, %.3f, %.3f) angulos: (%.3f, %.3f, %.3f) pasos: %d" ,
-             x, y, z, alfa_deg, beta_deg, sigma_deg, cantidad);
+  uint cantidad = (uint) req_in->steps;
 
-   // ACA poner codigo de rotacion
+  printf("Service request value: (%.2f, %.2f, %.2f) (%2.f, %2.f) %2.f %d.\n",
+            x, y, z,
+            alpha_deg, beta_deg, phi_deg,
+            cantidad
+  );
 
-   float paso_g = sigma_deg / cantidad; // Paso de microrotación en grados
+  float paso_g = phi_deg / cantidad; // Paso de microrotación en grados
 
-   float deg_to_rad = pi/180.0;
-   float alfa = alfa_deg * deg_to_rad;
-   float beta = beta_deg * deg_to_rad;
-   float fi = sigma_deg * deg_to_rad;
-   float paso = paso_g * deg_to_rad;
+  float deg_to_rad = pi/180.0;
+  float alfa = alpha_deg * deg_to_rad;
+  float beta = beta_deg * deg_to_rad;
+  float fi = phi_deg * deg_to_rad;
+  float paso = paso_g * deg_to_rad;
 
-   // Componentes del eje de rotación
-   float nx = sin(beta) * cos(alfa);
-   float ny = sin(beta) * sin(alfa);
-   float nz = cos(beta);
-   float cosfi = cos(fi);
-   float sinfi = sin(fi);
+  // Componentes del eje de rotación
+  float nx = sin(beta) * cos(alfa);
+  float ny = sin(beta) * sin(alfa);
+  float nz = cos(beta);
+  float cosfi = cos(fi);
+  float sinfi = sin(fi);
 
-   // Matriz para rotación total
-   float M1[3][3] = {
-       {
-           nx * nx + (1.0 - nx * nx) * cosfi,
-           nx * ny * (1.0 - cosfi) + nz * sinfi,
-           nx * nz * (1.0 - cosfi) - ny * sinfi
-       },
-       {
-           nx * ny * (1.0 - cosfi) - nz * sinfi,
-           ny * ny + (1.0 - ny * ny) * cosfi,
-           ny * nz * (1.0 - cosfi) + nx * sinfi
-       },
-       {
-           nx * nz * (1.0 - cosfi) + ny * sinfi,
-           ny * nz * (1.0 - cosfi) - nx * sinfi,
-           nz * nz + (1.0 - nz * nz) * cosfi
-       }
-   };
+  // Matriz para rotación total
+  float M1[3][3] = {
+      {
+          nx * nx + (1.0 - nx * nx) * cosfi,
+          nx * ny * (1.0 - cosfi) + nz * sinfi,
+          nx * nz * (1.0 - cosfi) - ny * sinfi
+      },
+      {
+          nx * ny * (1.0 - cosfi) - nz * sinfi,
+          ny * ny + (1.0 - ny * ny) * cosfi,
+          ny * nz * (1.0 - cosfi) + nx * sinfi
+      },
+      {
+          nx * nz * (1.0 - cosfi) + ny * sinfi,
+          ny * nz * (1.0 - cosfi) - nx * sinfi,
+          nz * nz + (1.0 - nz * nz) * cosfi
+      }
+  };
 
-   // Matriz de rotación simplificada MICRO ROTACION
-   float M_micro[3][3] = {
-       {1.0,       nz * paso, -ny * paso},
-       {-nz * paso, 1.0,       nx * paso},
-       {ny * paso, -nx * paso, 1.0}
-   };
+  // Matriz de rotación simplificada MICRO ROTACION
+  float M_micro[3][3] = {
+      {1.0,       nz * paso, -ny * paso},
+      {-nz * paso, 1.0,       nx * paso},
+      {ny * paso, -nx * paso, 1.0}
+  };
 
-   float V_micro[3] = {V[0], V[1], V[2]};
-   float temp[3];
+  float V_micro[3] = {V[0], V[1], V[2]};
+  float temp[3];
 
-   for (int i = 0; i < cantidad; i++) {
-       multiplicar_matriz_vector(M_micro, V_micro, temp);
+  for (int i = 0; i < cantidad; i++) {
+      multiplicar_matriz_vector(M_micro, V_micro, temp);
 
-       V_micro[0] = temp[0];
-       V_micro[1] = temp[1];
-       V_micro[2] = temp[2];
-   }
+      V_micro[0] = temp[0];
+      V_micro[1] = temp[1];
+      V_micro[2] = temp[2];
+  }
 
-   // Rotamos el vector de forma exacta
-   float V_rotado_exacto[3];
-   multiplicar_matriz_vector(M1, V, V_rotado_exacto);
+  // Rotamos el vector de forma exacta
+  float V_rotado_exacto[3];
+  multiplicar_matriz_vector(M1, V, V_rotado_exacto);
 
-   //
-    vector_rotado_msg.data.data[0] = V_rotado_exacto[0];
-    vector_rotado_msg.data.data[1] = V_rotado_exacto[1];
-    vector_rotado_msg.data.data[2] = V_rotado_exacto[2];
-    vector_rotado_msg.data.data[3] = V_micro[0];
-    vector_rotado_msg.data.data[4] = V_micro[1];
-    vector_rotado_msg.data.data[5] = V_micro[2];
+  //
+   res_in->fullx = V_rotado_exacto[0];
+   res_in->fully = V_rotado_exacto[1];
+   res_in->fullz = V_rotado_exacto[2];
 
-    RCSOFTCHECK(rcl_publish(&vector_rotado_pub, &vector_rotado_msg, NULL));
+   res_in->micrx = V_micro[0];
+   res_in->micry = V_micro[1];
+   res_in->micrz = V_micro[2];
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
@@ -262,41 +241,9 @@ void micro_ros_task(void *arg)
     }
     ESP_LOGI(TAG, "Node created successfully");
 
-    // buffer para datos recibidos
-    rotation_msg.data.data = (float *)malloc(ROTATION_INPUT_SIZE * sizeof(float));
-    rotation_msg.data.size = 0;
-    rotation_msg.data.capacity = ROTATION_INPUT_SIZE;
-
-    rc = rclc_subscription_init_default(
-        &rotation_sub,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-        "rotation_input");
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init rotation_sub: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "Subscriber initialized");
-
-    //  buffer del mensaje que vamos a publicar
-    vector_rotado_msg.data.data = (float *)malloc(ROTATION_OUTPUT_SIZE * sizeof(float));
-    vector_rotado_msg.data.size = ROTATION_OUTPUT_SIZE;
-    vector_rotado_msg.data.capacity = ROTATION_OUTPUT_SIZE;
-
-    rc = rclc_publisher_init_default(
-        &vector_rotado_pub,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-        "vector_rotado");
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init vector_rotado publisher: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "Publisher initialized");
+    // create service
+    rcl_service_t service;
+    RCCHECK(rclc_service_init_default(&service, &node, ROSIDL_GET_SRV_TYPE_SUPPORT(custom_interfaces, srv, VectorRotate), "/vector_rotate"));
 
     rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
     rc = rclc_executor_init(&executor, &support.context, 1, &allocator);
@@ -313,18 +260,16 @@ void micro_ros_task(void *arg)
         ESP_LOGW(TAG, "Failed to set executor timeout: %d (continuing)", rc);
     }
 
-    rc = rclc_executor_add_subscription(
-        &executor,
-        &rotation_sub,
-        &rotation_msg,
-        &rotation_callback,
-        ON_NEW_DATA);
+    custom_interfaces__srv__VectorRotate_Response res;
+    custom_interfaces__srv__VectorRotate_Request req;
+    RCCHECK(rclc_executor_add_service(&executor, &service, &req, &res, service_callback));
     if (rc != RCL_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to add subscription to executor: %d", rc);
+        ESP_LOGE(TAG, "Failed to add service to executor: %d", rc);
         vTaskDelete(NULL);
         return;
     }
+
     ESP_LOGI(TAG, "Executor configured successfully. Starting main loop...");
 
     while (1)
@@ -333,8 +278,8 @@ void micro_ros_task(void *arg)
         usleep(10000);
     }
 
-    RCCHECK(rcl_subscription_fini(&rotation_sub, &node));
-    RCCHECK(rcl_publisher_fini(&vector_rotado_pub, &node));
+    // Free resources
+    RCCHECK(rcl_service_fini(&service, &node));
     RCCHECK(rcl_node_fini(&node));
     vTaskDelete(NULL);
 }
