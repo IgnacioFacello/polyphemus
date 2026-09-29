@@ -7,9 +7,9 @@ idf_component_register(
     esp_driver_gpio
   REQUIRES
     driver
+    esp_adc
     esp_timer
     esp_rom
 )
-
 
 target_link_libraries(${COMPONENT_LIB} PRIVATE m)
