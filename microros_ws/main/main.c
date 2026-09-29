@@ -254,9 +254,6 @@ void micro_ros_task(void *arg)
         return;
     }
 
-<<<<<<< HEAD
-    // Retry loop for rclc_support_init
-=======
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 
@@ -296,7 +293,6 @@ void micro_ros_task(void *arg)
 #endif
 
 
->>>>>>> origin/feature/tp3-uart
     while (retry_count < MAX_RETRIES)
     {
         ESP_LOGI(
@@ -470,7 +466,6 @@ void micro_ros_task(void *arg)
     }
 }
 
-<<<<<<< HEAD
 static size_t uart_port = UART_NUM_0;
 
 void app_main(void)
@@ -500,145 +495,4 @@ void app_main(void)
 
     pot_deinit(potentiometer_h);
     //as5600_deinit(encoder_h);
-=======
-
-/* ============================================================
- * APP MAIN
- * ============================================================ */
-void app_main(void)
-{
-
-#if UART_TEST_ONLY
-
-    ESP_LOGI(TAG, "Modo lectura sensores por UART");
-
-
-    ESP_ERROR_CHECK(
-        pot_init(
-            &poten_config,
-            &potentiometer_h
-        )
-    );
-
-
-    ESP_ERROR_CHECK(
-        as5600_init(
-            &encoder_h
-        )
-    );
-
-
-    ESP_LOGI(
-        TAG,
-        "AS5600 y potenciometro inicializados"
-    );
-
-
-    while (1)
-    {
-        uint16_t angle = 0;
-        uint16_t raw_angle = 0;
-
-        float pot_raw = 0.0f;
-        float pot_percent = 0.0f;
-        float pot_voltage = 0.0f;
-
-
-        pot_update(
-            potentiometer_h
-        );
-
-
-        pot_get_raw(
-            potentiometer_h,
-            &pot_raw
-        );
-
-
-        pot_get_percentage(
-            potentiometer_h,
-            &pot_percent
-        );
-
-
-        pot_get_voltage(
-            potentiometer_h,
-            &pot_voltage
-        );
-
-
-        as5600_get_angle(
-            encoder_h,
-            &angle
-        );
-
-
-        as5600_get_raw_angle(
-            encoder_h,
-            &raw_angle
-        );
-
-
-        float calculated_angle =
-            ((float)raw_angle * 360.0f) / 4096.0f;
-
-
-        ESP_LOGI(
-            TAG,
-            "ANGLE=%u | RAW=%u | CALC=%.2f deg | "
-            "POT_RAW=%.0f | POT=%.2f%% | V=%.3f V",
-            angle,
-            raw_angle,
-            calculated_angle,
-            pot_raw,
-            pot_percent,
-            pot_voltage
-        );
-
-
-        vTaskDelay(
-            pdMS_TO_TICKS(100)
-        );
-    }
-
-
-#else
-
-#if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || \
-    defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
-
-    ESP_ERROR_CHECK(
-        uros_network_interface_initialize()
-    );
-
-#endif
-
-
-    ESP_ERROR_CHECK(
-        pot_init(
-            &poten_config,
-            &potentiometer_h
-        )
-    );
-
-
-    ESP_ERROR_CHECK(
-        as5600_init(
-            &encoder_h
-        )
-    );
-
-
-    xTaskCreate(
-        micro_ros_task,
-        "micro_ros_task",
-        MICRO_ROS_APP_STACK,
-        NULL,
-        MICRO_ROS_APP_TASK_PRIO,
-        NULL
-    );
-
-#endif
->>>>>>> origin/feature/tp3-uart
 }
-
