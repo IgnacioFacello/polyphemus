@@ -9,16 +9,12 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_err.h"
-#include "driver/gpio.h"
-#include <esp_adc/adc_oneshot.h>
 #include "sdkconfig.h"
 
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
-#include <std_msgs/msg/float32.h>
-#include <std_msgs/msg/int64.h>
-#include <geometry_msgs/msg/twist.h>
+#include <std_msgs/msg/float32_multi_array.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
@@ -43,6 +39,7 @@
             printf("Failed status on line %d: %d. Continuing.\n", __LINE__, (int)temp_rc); \
         }                                                                                  \
     }
+
 #define MICRO_ROS_APP_STACK 16000
 #define MICRO_ROS_APP_TASK_PRIO 5
 
@@ -54,69 +51,131 @@
 #define DOMAIN_ID 0
 #endif
 
-// #define ENCODER_GPIO_A 32
-// #define ENCODER_GPIO_B 33
-// #define ENCODER_PPR 600
-#define TIMER_PERIOD_MS 100 // Reducido de 400ms
-#define AVG_SAMPLES 75      // Numero de muestras por mensaje
-
-#define ADC_PIN_CLEAN ADC_CHANNEL_7        // Channel 7 - Check ESP32 Pinout for the GPIO Number
-#define ADC_UNIT ADC_UNIT_1          // ADC1
-#define ADC_BITWIDTH ADC_BITWIDTH_12 // 12-bit resolution (0-4095)
-#define ADC_ATTEN ADC_ATTEN_DB_12    // ~3.3V full-scale voltage
+// Tamaño del array de entrada: 3 componentes de vector + 3 ángulos.
+// Si más adelante necesitás más datos (ej. un cuarto ángulo, o un segundo vector),
+// solo cambiá este número.
+#define ROTATION_INPUT_SIZE 7
+#define ROTATION_OUTPUT_SIZE 6 // vector resultado ((x, y, z), (x, y, z))
 
 static const char *TAG = "micro_ros";
 
-static rcl_publisher_t clean__position_publisher;
-std_msgs__msg__Float32 clean__position_msg;
+// Publisher: publica el vector ya rotado
+static rcl_publisher_t vector_rotado_pub;
+static std_msgs__msg__Float32MultiArray vector_rotado_msg;
 
-static rcl_publisher_t clean__voltage_publisher;
-std_msgs__msg__Float32 clean__voltage_msg;
+// Subscriber: recibe vector + ángulos a aplicar
+static rcl_subscription_t rotation_sub;
+static std_msgs__msg__Float32MultiArray rotation_msg;
 
-// Agregar después de las definiciones de TAG
-static adc_oneshot_unit_handle_t adc_handle = NULL;
-static const float MAX_VOLTAGE = 3.3f; // Voltaje máximo según ATTEN_DB_12
-static const int ADC_MAX_VALUE = 4095; // Resolución 12-bit
+float pi = acos(-1.0);
 
-// En timer_callback, reemplaza la línea incompleta con:
-void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
-{
-    if (timer == NULL || adc_handle == NULL)
-        return;
-
-    int adc_sample_clean = 0;
-    float adc_value_clean = 0.0;
-    (void)last_call_time;
-
-    // 1. Leer ADC
-    //
-    for (int i=0; i<AVG_SAMPLES; i++) {
-        esp_err_t adc_err = adc_oneshot_read(adc_handle, ADC_PIN_CLEAN, &adc_sample_clean);
-        if (adc_err != ESP_OK)
-        {
-            ESP_LOGW(TAG, "ADC read failed: %d", adc_err);
-            return;
+void multiplicar_matriz_vector(float M[3][3], float V[3], float salida[3]) {
+    for (int i = 0; i < 3; i++) {
+        salida[i] = 0.0;
+        for (int j = 0; j < 3; j++) {
+            salida[i] += M[i][j] * V[j];
         }
-        adc_value_clean += (float)adc_sample_clean;
     }
-    adc_value_clean = adc_value_clean/(float)AVG_SAMPLES;
+}
 
-    // 2. Calcular posición en porcentaje (0-100)
-    float posicion_porcentaje_clean = (adc_value_clean / ADC_MAX_VALUE) * 100.0f;
+/**
+ * Se ejecuta automáticamente cada vez que llega un mensaje nuevo al tópico
+ * "rotation_input". El middleware ya dejó los datos recibidos escritos
+ * dentro de rotation_msg.data.data antes de llamar a esta función.
+ */
+void rotation_callback(const void *msgin)
+{
+    const std_msgs__msg__Float32MultiArray *msg =
+        (const std_msgs__msg__Float32MultiArray *)msgin;
 
-    // 3. Calcular voltaje (0-3.3V)
-    float voltaje_clean = (adc_value_clean / ADC_MAX_VALUE) * MAX_VOLTAGE;
+    if (msg->data.size < ROTATION_INPUT_SIZE)
+    {
+        ESP_LOGW(TAG, "Mensaje recibido con tamaño inesperado: %d (esperado %d)",
+                 (int)msg->data.size, ROTATION_INPUT_SIZE);
+        return;
+    }
 
-    // 4. Publicar posición
-    clean__position_msg.data = posicion_porcentaje_clean;
-    RCSOFTCHECK(rcl_publish(&clean__position_publisher, &clean__position_msg, NULL));
+    float x = msg->data.data[0];
+    float y = msg->data.data[1];
+    float z = msg->data.data[2];
+    // Vector que queremos rotar
+    float V[3] = {x, y, z};
 
-    // 5. Publicar voltaje
-    clean__voltage_msg.data = voltaje_clean;
-    RCSOFTCHECK(rcl_publish(&clean__voltage_publisher, &clean__voltage_msg, NULL));
+    float alfa_deg = msg->data.data[3];
+    float beta_deg = msg->data.data[4];
+    float sigma_deg = msg->data.data[5];
+    int cantidad = (int) msg->data.data[6];
 
-    ESP_LOGI(TAG, "mean ADC: %.2f | Posición: %.2f%% | Voltaje: %.2fV",
-             adc_value_clean, posicion_porcentaje_clean, voltaje_clean);
+    ESP_LOGI(TAG, "Recibido vector: (%.3f, %.3f, %.3f) angulos: (%.3f, %.3f, %.3f) pasos: %d" ,
+             x, y, z, alfa_deg, beta_deg, sigma_deg, cantidad);
+
+   // ACA poner codigo de rotacion
+
+   float paso_g = sigma_deg / cantidad; // Paso de microrotación en grados
+
+   float deg_to_rad = pi/180.0;
+   float alfa = alfa_deg * deg_to_rad;
+   float beta = beta_deg * deg_to_rad;
+   float fi = sigma_deg * deg_to_rad;
+   float paso = paso_g * deg_to_rad;
+
+   // Componentes del eje de rotación
+   float nx = sin(beta) * cos(alfa);
+   float ny = sin(beta) * sin(alfa);
+   float nz = cos(beta);
+   float cosfi = cos(fi);
+   float sinfi = sin(fi);
+
+   // Matriz para rotación total
+   float M1[3][3] = {
+       {
+           nx * nx + (1.0 - nx * nx) * cosfi,
+           nx * ny * (1.0 - cosfi) + nz * sinfi,
+           nx * nz * (1.0 - cosfi) - ny * sinfi
+       },
+       {
+           nx * ny * (1.0 - cosfi) - nz * sinfi,
+           ny * ny + (1.0 - ny * ny) * cosfi,
+           ny * nz * (1.0 - cosfi) + nx * sinfi
+       },
+       {
+           nx * nz * (1.0 - cosfi) + ny * sinfi,
+           ny * nz * (1.0 - cosfi) - nx * sinfi,
+           nz * nz + (1.0 - nz * nz) * cosfi
+       }
+   };
+
+   // Matriz de rotación simplificada MICRO ROTACION
+   float M_micro[3][3] = {
+       {1.0,       nz * paso, -ny * paso},
+       {-nz * paso, 1.0,       nx * paso},
+       {ny * paso, -nx * paso, 1.0}
+   };
+
+   float V_micro[3] = {V[0], V[1], V[2]};
+   float temp[3];
+
+   for (int i = 0; i < cantidad; i++) {
+       multiplicar_matriz_vector(M_micro, V_micro, temp);
+
+       V_micro[0] = temp[0];
+       V_micro[1] = temp[1];
+       V_micro[2] = temp[2];
+   }
+
+   // Rotamos el vector de forma exacta
+   float V_rotado_exacto[3];
+   multiplicar_matriz_vector(M1, V, V_rotado_exacto);
+
+   //
+    vector_rotado_msg.data.data[0] = V_rotado_exacto[0];
+    vector_rotado_msg.data.data[1] = V_rotado_exacto[1];
+    vector_rotado_msg.data.data[2] = V_rotado_exacto[2];
+    vector_rotado_msg.data.data[3] = V_micro[0];
+    vector_rotado_msg.data.data[4] = V_micro[1];
+    vector_rotado_msg.data.data[5] = V_micro[2];
+
+    RCSOFTCHECK(rcl_publish(&vector_rotado_pub, &vector_rotado_msg, NULL));
 }
 
 /* ── Tarea micro-ROS ────────────────────────────────────────── */
@@ -129,7 +188,6 @@ void micro_ros_task(void *arg)
     const int MAX_RETRIES = 5;
     const int RETRY_DELAY_MS = 2000;
 
-    // Give network time to stabilize after WiFi connects
     ESP_LOGI(TAG, "Waiting for network to stabilize...");
     vTaskDelay(pdMS_TO_TICKS(2000));
 
@@ -142,7 +200,6 @@ void micro_ros_task(void *arg)
         return;
     }
 
-    // Setear el DOMAIN_ID
     rc = rcl_init_options_set_domain_id(&init_options, DOMAIN_ID);
     if (rc != RCL_RET_OK)
     {
@@ -154,8 +211,8 @@ void micro_ros_task(void *arg)
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
     rmw_init_options_t *rmw_options = rcl_init_options_get_rmw_init_options(&init_options);
     rc = rmw_uros_options_set_udp_address(CONFIG_MICRO_ROS_AGENT_IP,
-                                          CONFIG_MICRO_ROS_AGENT_PORT,
-                                          rmw_options);
+                                           CONFIG_MICRO_ROS_AGENT_PORT,
+                                           rmw_options);
     if (rc != RCL_RET_OK)
     {
         ESP_LOGE(TAG, "Failed to set UDP address: %d", rc);
@@ -166,7 +223,6 @@ void micro_ros_task(void *arg)
              CONFIG_MICRO_ROS_AGENT_PORT);
 #endif
 
-    // Retry loop for rclc_support_init
     while (retry_count < MAX_RETRIES)
     {
         ESP_LOGI(TAG, "Attempting micro-ROS support init (attempt %d/%d)...",
@@ -206,50 +262,44 @@ void micro_ros_task(void *arg)
     }
     ESP_LOGI(TAG, "Node created successfully");
 
-    // Inicialización del publicador
-    rc = rclc_publisher_init_default(
-        &clean__position_publisher,
+    // buffer para datos recibidos
+    rotation_msg.data.data = (float *)malloc(ROTATION_INPUT_SIZE * sizeof(float));
+    rotation_msg.data.size = 0;
+    rotation_msg.data.capacity = ROTATION_INPUT_SIZE;
+
+    rc = rclc_subscription_init_default(
+        &rotation_sub,
         &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-        "clean/percentage_position");
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+        "rotation_input");
     if (rc != RCL_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to init clean/position_publisher: %d", rc);
+        ESP_LOGE(TAG, "Failed to init rotation_sub: %d", rc);
         vTaskDelete(NULL);
         return;
     }
+    ESP_LOGI(TAG, "Subscriber initialized");
+
+    //  buffer del mensaje que vamos a publicar
+    vector_rotado_msg.data.data = (float *)malloc(ROTATION_OUTPUT_SIZE * sizeof(float));
+    vector_rotado_msg.data.size = ROTATION_OUTPUT_SIZE;
+    vector_rotado_msg.data.capacity = ROTATION_OUTPUT_SIZE;
 
     rc = rclc_publisher_init_default(
-        &clean__voltage_publisher,
+        &vector_rotado_pub,
         &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-        "clean/voltage");
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+        "vector_rotado");
     if (rc != RCL_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to init clean/voltage_publisher: %d", rc);
+        ESP_LOGE(TAG, "Failed to init vector_rotado publisher: %d", rc);
         vTaskDelete(NULL);
         return;
     }
+    ESP_LOGI(TAG, "Publisher initialized");
 
-    // Inicialización del Timer
-    rcl_timer_t timer = rcl_get_zero_initialized_timer();
-    rc = rclc_timer_init_default2(
-        &timer,
-        &support,
-        RCL_MS_TO_NS(TIMER_PERIOD_MS),
-        timer_callback,
-        true);
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init timer: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "Timer initialized");
-
-    // Executor
     rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
-    rc = rclc_executor_init(&executor, &support.context, 3, &allocator);
+    rc = rclc_executor_init(&executor, &support.context, 1, &allocator);
     if (rc != RCL_RET_OK)
     {
         ESP_LOGE(TAG, "Failed to init executor: %d", rc);
@@ -263,17 +313,15 @@ void micro_ros_task(void *arg)
         ESP_LOGW(TAG, "Failed to set executor timeout: %d (continuing)", rc);
     }
 
-    rc = rclc_executor_add_timer(&executor, &timer);
+    rc = rclc_executor_add_subscription(
+        &executor,
+        &rotation_sub,
+        &rotation_msg,
+        &rotation_callback,
+        ON_NEW_DATA);
     if (rc != RCL_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to add timer to executor: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to add service to executor: %d", rc);
+        ESP_LOGE(TAG, "Failed to add subscription to executor: %d", rc);
         vTaskDelete(NULL);
         return;
     }
@@ -285,7 +333,8 @@ void micro_ros_task(void *arg)
         usleep(10000);
     }
 
-    RCCHECK(rcl_publisher_fini(&clean__position_publisher, &node));
+    RCCHECK(rcl_subscription_fini(&rotation_sub, &node));
+    RCCHECK(rcl_publisher_fini(&vector_rotado_pub, &node));
     RCCHECK(rcl_node_fini(&node));
     vTaskDelete(NULL);
 }
@@ -295,19 +344,6 @@ void app_main(void)
 #if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
     ESP_ERROR_CHECK(uros_network_interface_initialize());
 #endif
-
-    // Configure ADC
-    adc_oneshot_unit_init_cfg_t init_config = {
-        .unit_id = ADC_UNIT,
-        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
-    };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
-
-    adc_oneshot_chan_cfg_t config = {
-        .bitwidth = ADC_BITWIDTH,
-        .atten = ADC_ATTEN,
-    };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_PIN_CLEAN, &config));
 
     xTaskCreate(micro_ros_task, "micro_ros_task",
                 MICRO_ROS_APP_STACK, NULL, MICRO_ROS_APP_TASK_PRIO, NULL);
