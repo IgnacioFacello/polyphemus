@@ -3,6 +3,7 @@ idf_component_register(
     "main.c"
     "driver/as5600.c"
     "driver/potentiometer.c"
+    "driver/mpu6050.c"
 
   INCLUDE_DIRS
     "."
