@@ -5,6 +5,7 @@
 #include "driver/i2c_master.h"
 
 #define MPU6050_WHO_AM_I_REG_ADDR 0x75   /*!< Register addresses of the "who am I" register */
+#define MPU6050_PWR_MGMT_1_REG_ADDR 0x6B /*!< Register addresses of the power management register */
 
 esp_err_t mpu6050_register_read(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr, uint8_t *data, size_t len);
 
