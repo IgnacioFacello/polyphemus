@@ -1,8 +1,6 @@
 idf_component_register(
   SRCS
     "main.c"
-    "driver/as5600.c"
-    "driver/potentiometer.c"
     "driver/mpu6050.c"
 
   INCLUDE_DIRS
@@ -10,8 +8,8 @@ idf_component_register(
     "driver"
 
   PRIV_REQUIRES
-    micro_ros_espidf_component
     esp_driver_gpio
+
 
   REQUIRES
     driver

@@ -28,4 +28,16 @@ menu "Example Configuration"
         help
             I2C Speed of Master device.
 
+    config INT_PIN
+        int "Pin that wil listen for the IMU interrupt"
+        default 0
+        help
+            I2C Speed of Master device.
+
+    config LED_PIN
+        int "Output pin for testing purpouses"
+        default 12
+        help
+            I2C Speed of Master device.
+
 endmenu
