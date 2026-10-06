@@ -313,8 +313,16 @@ void micro_ros_task(void *arg)
  * ============================================================ */
 void app_main(void)
 {
-
+    // Interrupt Begin
+    
+    // Interrupt End
+ 
     i2c_master_init(&bus_handle, &dev_handle);
+    if (dev_handle == NULL)
+    {
+        ESP_LOGE(TAG, "Error initializing I2C");
+        return;
+    }
     ESP_LOGI(TAG, "I2C initialized successfully");
 
     /* Read the MPU6050 WHO_AM_I register, on power up the register should have the value 0x68 */
@@ -323,13 +331,19 @@ void app_main(void)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "No se pudo leer WHO_AM_I: %s", esp_err_to_name(err));
+        return;
     }
-    else
-    {
-        ESP_LOGI(TAG, "WHO_AM_I = 0x%02X (esperado 0x68)", data[0]);
-    }
-    ESP_LOGI(TAG, "WHO_AM_I = %X", data[0]);
+    ESP_LOGI(TAG, "WHO_AM_I = 0x%02X (esperado 0x68)", data[0]);
 
+    err = mpu6050_register_read(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, data, 1);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "No se pudo leer %s: %s", "PWR_MGMT", esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI(TAG, "%s = 0x%02X", "PWM_MGMT", data[0]);
+
+    /*
     #if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || \
         defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
 
@@ -345,4 +359,5 @@ void app_main(void)
     NULL,
     MICRO_ROS_APP_TASK_PRIO,
     NULL);
+    */
 }
