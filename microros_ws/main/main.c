@@ -17,14 +17,32 @@
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
-#include <std_msgs/msg/float32.h>
-#include <std_msgs/msg/int32.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
+
+#include <geometry_msgs/msg/pose_stamped.h>
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 #include <rmw_microros/rmw_microros.h>
 #endif
+
+#define RCCHECK(fn)                                                                      \
+    {                                                                                    \
+        rcl_ret_t temp_rc = fn;                                                          \
+        if ((temp_rc != RCL_RET_OK))                                                     \
+        {                                                                                \
+            printf("Failed status on line %d: %d. Aborting.\n", __LINE__, (int)temp_rc); \
+            vTaskDelete(NULL);                                                           \
+        }                                                                                \
+    }
+#define RCSOFTCHECK(fn)                                                                    \
+    {                                                                                      \
+        rcl_ret_t temp_rc = fn;                                                            \
+        if ((temp_rc != RCL_RET_OK))                                                       \
+        {                                                                                  \
+            printf("Failed status on line %d: %d. Continuing.\n", __LINE__, (int)temp_rc); \
+        }                                                                                  \
+    }
 
 #define MICRO_ROS_APP_STACK 16000
 #define MICRO_ROS_APP_TASK_PRIO 5
@@ -38,9 +56,11 @@
 #define DOMAIN_ID 0
 #endif
 
+static const char *TAG = "micro_ros";
 static uint8_t data[2];
 static i2c_master_bus_handle_t bus_handle;
 static i2c_master_dev_handle_t dev_handle;
+SemaphoreHandle_t xSemaphore = NULL;
 
 static const char *TAG = "micro_ros";
 void leer_fifo_count(uint16_t *count)
@@ -59,37 +79,26 @@ void leer_fifo_count(uint16_t *count)
     *count = ((uint16_t)buffer[0] << 8) | buffer[1];
 }
 
-void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
-{
-    (void)timer;
-    (void)last_call_time;
+void IRAM_ATTR button_isr_handler(void* arg) {
+  xSemaphoreGiveFromISR(xSemaphore, NULL);
 }
 
-esp_err_t init_publishers(rcl_node_t *node)
-{
-    rcl_ret_t rc;
-
-    // rc = rclc_publisher_init_default(
-    //     &poten_publisher,
-    //     node,
-    //     ROSIDL_GET_MSG_TYPE_SUPPORT(
-    //         std_msgs,
-    //         msg,
-    //         Float32
-    //     ),
-    //     "potentiometer"
-    // );
-
-    // if (rc != RCL_RET_OK)
-    // {
-    //     ESP_LOGE(
-    //         TAG,
-    //         "Failed to init potentiometer publisher: %d",
-    //         rc);
-
-    //     return rc;
-    // }
-    return RCL_RET_OK;
+void sensor_task(void* arg) {
+    uint8_t fifo_counter = 0;
+    for(;;) {
+    if(xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
+        // GET FIFO COUNTER FROM IMU
+        /* NOTE: Data is writen to the FIFO in order of register number (lowest to highest)
+         * 0-5 ACCELEROMETER 6-11 GYROSCOPE
+         */
+        if (fifo_counter > 12){ ESP_LOGI(TAG, "Fifo counter gt 12"); }
+        for (uint8_t i=0x0; i<=fifo_counter; i++) {
+            // GET ACCELEROMETER AND GYROSCOPE DATA
+            // SAVE TO MSG OR AUX_STRUCTURE
+        }
+        RCSOFTCHECK(rcl_publish(&pose_publisher, &pose_msg, NULL);)
+    }
+  }
 }
 
 void micro_ros_task(void *arg)
@@ -117,35 +126,15 @@ void micro_ros_task(void *arg)
     rcl_init_options_t init_options =
         rcl_get_zero_initialized_init_options();
 
-    rc = rcl_init_options_init(
+    RCCHECK(rcl_init_options_init(
         &init_options,
         allocator);
+    )
 
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to initialize init_options: %d",
-            rc);
-
-        vTaskDelete(NULL);
-        return;
-    }
-
-    rc = rcl_init_options_set_domain_id(
+    RCCHECK(rcl_init_options_set_domain_id(
         &init_options,
         DOMAIN_ID);
-
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to set domain id: %d",
-            rc);
-
-        vTaskDelete(NULL);
-        return;
-    }
+    )
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 
@@ -153,21 +142,11 @@ void micro_ros_task(void *arg)
         rcl_init_options_get_rmw_init_options(
             &init_options);
 
-    rc = rmw_uros_options_set_udp_address(
+    RCCHECK(rmw_uros_options_set_udp_address(
         CONFIG_MICRO_ROS_AGENT_IP,
         CONFIG_MICRO_ROS_AGENT_PORT,
         rmw_options);
-
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to set UDP address: %d",
-            rc);
-
-        vTaskDelete(NULL);
-        return;
-    }
+    )
 
     ESP_LOGI(
         TAG,
@@ -221,87 +200,53 @@ void micro_ros_task(void *arg)
     rcl_node_t node =
         rcl_get_zero_initialized_node();
 
-    rc = rclc_node_init_default(
+    RCCHECK(rclc_node_init_default(
         &node,
         "microros_node",
         MICROROS_NAMESPACE,
         &support);
+    )
 
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to init node: %d",
-            rc);
-
-        vTaskDelete(NULL);
-        return;
-    }
-
-    rc = init_publishers(
-        &node);
-
-    if (rc != RCL_RET_OK)
-    {
-        vTaskDelete(NULL);
-        return;
-    }
+    RCCHECK(rclc_publisher_init_default(
+        &pose_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(
+            geometry_msgs,
+            msg,
+            PoseStamped
+        ),
+        "pose"
+    );)
 
     rcl_timer_t timer =
         rcl_get_zero_initialized_timer();
 
-    rc = rclc_timer_init_default2(
+    /* TODO: Borrar si no usamos el timer
+     RCCHECK(rclc_timer_init_default2(
         &timer,
         &support,
         RCL_MS_TO_NS(TIMER_PERIOD_MS),
         timer_callback,
         true);
-
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to init timer: %d",
-            rc);
-
-        vTaskDelete(NULL);
-        return;
-    }
+    ) */
 
     rclc_executor_t executor =
         rclc_executor_get_zero_initialized_executor();
 
-    rc = rclc_executor_init(
+    RCCHECK(rclc_executor_init(
         &executor,
         &support.context,
         1,
         &allocator);
+    )
 
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to init executor: %d",
-            rc);
-
-        vTaskDelete(NULL);
-        return;
-    }
-
-    rc = rclc_executor_add_timer(
+    /* TODO: Borrar si no usamos el timer
+    RCCHECK(rclc_executor_add_timer(
         &executor,
-        &timer);
-
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to add timer to executor: %d",
-            rc);
-
-        vTaskDelete(NULL);
-        return;
+        &timer
+    );
     }
+    */
 
     while (1)
     {
