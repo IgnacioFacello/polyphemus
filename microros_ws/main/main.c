@@ -1,23 +1,17 @@
 #include <stdint.h>
-#include <string.h>
-#include <stdio.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <math.h>
 
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
+
 
 #include "esp_log.h"
-#include "esp_system.h"
 #include "esp_err.h"
-#include "driver/gpio.h"
-#include "esp_adc/adc_oneshot.h"
 #include "sdkconfig.h"
-#include "driver/i2c_master.h"
 
-#include "driver/potentiometer.h"
-#include "driver/as5600.h"
 #include "driver/mpu6050.h"
 
 #include <uros_network_interfaces.h>
@@ -35,10 +29,6 @@
 #define MICRO_ROS_APP_STACK 16000
 #define MICRO_ROS_APP_TASK_PRIO 5
 #define TIMER_PERIOD_MS 100
-
-
-/* AGREGADO: 1 = prueba UART, 0 = micro-ROS */
-#define UART_TEST_ONLY 1
 
 #ifndef MICROROS_NAMESPACE
 #define MICROROS_NAMESPACE ""
