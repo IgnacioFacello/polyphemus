@@ -36,6 +36,7 @@
 #define MICRO_ROS_APP_TASK_PRIO 5
 #define TIMER_PERIOD_MS 100
 
+
 /* AGREGADO: 1 = prueba UART, 0 = micro-ROS */
 #define UART_TEST_ONLY 1
 
@@ -52,6 +53,21 @@ static i2c_master_bus_handle_t bus_handle;
 static i2c_master_dev_handle_t dev_handle;
 
 static const char *TAG = "micro_ros";
+void leer_fifo_count(uint16_t *count)
+{
+    uint8_t buffer[2];
+
+    esp_err_t err = mpu6050_register_read(dev_handle, MPU6050_FIFO_COUNT_H, buffer, 2);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "No se pudo leer FIFO_COUNT: %s", esp_err_to_name(err));
+        
+    }
+
+    // buffer[0] tiene FIFO_COUNT_H
+    // buffer[1] tiene FIFO_COUNT_L
+    *count = ((uint16_t)buffer[0] << 8) | buffer[1];
+}
 
 void timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 {
@@ -314,9 +330,9 @@ void micro_ros_task(void *arg)
 void app_main(void)
 {
     // Interrupt Begin
-    
+
     // Interrupt End
- 
+
     i2c_master_init(&bus_handle, &dev_handle);
     if (dev_handle == NULL)
     {
@@ -325,16 +341,8 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "I2C initialized successfully");
 
-    /* Read the MPU6050 WHO_AM_I register, on power up the register should have the value 0x68 */
-    esp_err_t err = mpu6050_register_read(dev_handle, MPU6050_WHO_AM_I_REG_ADDR, data, 1);
-
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "No se pudo leer WHO_AM_I: %s", esp_err_to_name(err));
-        return;
-    }
-    ESP_LOGI(TAG, "WHO_AM_I = 0x%02X (esperado 0x68)", data[0]);
-
+    esp_err_t err = mpu6050_register_write_byte(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, 0x01); // sacar de sleep + elegir reloj
+    vTaskDelay(pdMS_TO_TICKS(100));
     err = mpu6050_register_read(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, data, 1);
     if (err != ESP_OK)
     {
@@ -342,6 +350,21 @@ void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "%s = 0x%02X", "PWM_MGMT", data[0]);
+
+    err = mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x01); // Activamos el filtro pasabajo (Chequear config)
+    err = mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x04);
+    err = mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04);
+    err = mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x40);
+
+    err = mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78);
+
+    err = mpu6050_register_read(dev_handle, MPU6050_FIFO_EN, data, 1);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "No se pudo LEER %s: %s", "FIFO_EN", esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI(TAG, "%s = 0x%02X", "FIFO_EN", data[0]);
 
     /*
     #if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || \
