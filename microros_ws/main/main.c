@@ -117,7 +117,7 @@ rcl_ret_t configure_mpu(i2c_master_dev_handle_t dev_handle){
     RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x01)); // Activamos el filtro pasabajo (Chequear config)
     RCCHECK(mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x04));
     RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04));
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x40));
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x40));
 
     RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78));
 
