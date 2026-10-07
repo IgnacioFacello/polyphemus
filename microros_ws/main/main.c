@@ -20,7 +20,7 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
-#include <geometry_msg/msg/pose_stamped.h>
+#include <geometry_msgs/msg/pose_stamped.h>
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 #include <rmw_microros/rmw_microros.h>
@@ -196,7 +196,7 @@ void micro_ros_task(void *arg)
 
     RCCHECK(rclc_publisher_init_default(
         &pose_publisher,
-        node,
+        &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(
             geometry_msgs,
             msg,
@@ -208,13 +208,14 @@ void micro_ros_task(void *arg)
     rcl_timer_t timer =
         rcl_get_zero_initialized_timer();
 
-    RCCHECK(rclc_timer_init_default2(
+    /* TODO: Borrar si no usamos el timer
+     RCCHECK(rclc_timer_init_default2(
         &timer,
         &support,
         RCL_MS_TO_NS(TIMER_PERIOD_MS),
         timer_callback,
         true);
-    )
+    ) */
 
     rclc_executor_t executor =
         rclc_executor_get_zero_initialized_executor();
@@ -226,10 +227,13 @@ void micro_ros_task(void *arg)
         &allocator);
     )
 
+    /* TODO: Borrar si no usamos el timer
     RCCHECK(rclc_executor_add_timer(
         &executor,
-        &timer);
+        &timer
+    );
     }
+    */
 
     while (1)
     {

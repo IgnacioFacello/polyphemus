@@ -10,6 +10,7 @@ idf_component_register(
   PRIV_REQUIRES
     micro_ros_espidf_component
     esp_driver_gpio
+
   REQUIRES
     driver
     esp_adc
