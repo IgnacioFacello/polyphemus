@@ -60,19 +60,42 @@ static const char *TAG = "micro_ros";
 static uint8_t data[2];
 static i2c_master_bus_handle_t bus_handle;
 static i2c_master_dev_handle_t dev_handle;
-SemaphoreHandle_t xSemaphore = NULL;
 
-static const char *TAG = "micro_ros";
+static rcl_publisher_t pose_publisher;
+static geometry_msgs__msg__PoseStamped pose_msg;
+
+SemaphoreHandle_t xSemaphore = NULL;
+rcl_ret_t mpu6050_receive_fifo (
+    i2c_master_dev_handle_t dev_handle,
+	mpu6050_data_t *data_p
+) {
+	uint8_t fifo[FIFO_BURST_LEN];
+	rcl_ret_t err = RCL_RET_OK;
+
+	// Read specified FIFO buffer size (depends on configuration set)
+	for (uint8_t i = 0; i < FIFO_BURST_LEN; ++i) {
+		if ((err = mpu6050_register_read(dev_handle, MPU6050_FIFO_R_W,
+		fifo+i, 1)) != RCL_RET_OK) {
+			break;
+		}
+	}
+
+	// Configure data structure
+	data_p->ax = (int16_t)fifo[0]  << 8  | (int16_t)fifo[1];
+	data_p->ay = (int16_t)fifo[2]  << 8  | (int16_t)fifo[3];
+	data_p->az = (int16_t)fifo[4]  << 8  | (int16_t)fifo[5];
+	data_p->gx = (int16_t)fifo[6]  << 8  | (int16_t)fifo[7];
+	data_p->gy = (int16_t)fifo[8]  << 8  | (int16_t)fifo[9];
+	data_p->gz = (int16_t)fifo[10] << 8  | (int16_t)fifo[11];
+
+	return err;
+}
+
 void leer_fifo_count(uint16_t *count)
 {
     uint8_t buffer[2];
 
-    esp_err_t err = mpu6050_register_read(dev_handle, MPU6050_FIFO_COUNT_H, buffer, 2);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "No se pudo leer FIFO_COUNT: %s", esp_err_to_name(err));
-        
-    }
+    RCCHECK(mpu6050_register_read(dev_handle, MPU6050_FIFO_COUNT_H, buffer, 2);)
 
     // buffer[0] tiene FIFO_COUNT_H
     // buffer[1] tiene FIFO_COUNT_L
@@ -84,19 +107,16 @@ void IRAM_ATTR button_isr_handler(void* arg) {
 }
 
 void sensor_task(void* arg) {
-    uint8_t fifo_counter = 0;
+    mpu6050_data_t * data_p = malloc(sizeof(mpu6050_data_t));
     for(;;) {
     if(xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
-        // GET FIFO COUNTER FROM IMU
         /* NOTE: Data is writen to the FIFO in order of register number (lowest to highest)
          * 0-5 ACCELEROMETER 6-11 GYROSCOPE
          */
-        if (fifo_counter > 12){ ESP_LOGI(TAG, "Fifo counter gt 12"); }
-        for (uint8_t i=0x0; i<=fifo_counter; i++) {
-            // GET ACCELEROMETER AND GYROSCOPE DATA
-            // SAVE TO MSG OR AUX_STRUCTURE
-        }
-        RCSOFTCHECK(rcl_publish(&pose_publisher, &pose_msg, NULL);)
+        mpu6050_receive_fifo(dev_handle, data_p);
+        ESP_LOGI(TAG, "Accelerometer: ax=%d, ay=%d, az=%d", data_p->ax, data_p->ay, data_p->az);
+        ESP_LOGI(TAG, "Gyroscope: gx=%d, gy=%d, gz=%d", data_p->gx, data_p->gy, data_p->gz);
+        //RCSOFTCHECK(rcl_publish(&pose_publisher, &pose_msg, NULL);)
     }
   }
 }
@@ -218,10 +238,10 @@ void micro_ros_task(void *arg)
         "pose"
     );)
 
+    /* TODO: Borrar si no usamos el timer
     rcl_timer_t timer =
         rcl_get_zero_initialized_timer();
 
-    /* TODO: Borrar si no usamos el timer
      RCCHECK(rclc_timer_init_default2(
         &timer,
         &support,
@@ -265,7 +285,29 @@ void micro_ros_task(void *arg)
 void app_main(void)
 {
     // Interrupt Begin
+    xSemaphore = xSemaphoreCreateBinary();
 
+	// set the correct direction
+	gpio_set_direction(CONFIG_INT_PIN, GPIO_MODE_INPUT);
+    gpio_set_direction(CONFIG_LED_PIN, GPIO_MODE_OUTPUT);
+
+    gpio_set_intr_type(
+        CONFIG_INT_PIN, // gpio_num_t,
+        GPIO_INTR_NEGEDGE // gpio_int_type_t
+    );
+
+    xTaskCreate(sensor_task, "sensor_task",
+        2048, NULL,
+        10, NULL
+    );
+
+    gpio_install_isr_service(0);
+
+    gpio_isr_handler_add(
+        CONFIG_LED_PIN,
+        button_isr_handler,
+        NULL
+    );
     // Interrupt End
 
     i2c_master_init(&bus_handle, &dev_handle);
@@ -276,32 +318,15 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "I2C initialized successfully");
 
-    esp_err_t err = mpu6050_register_write_byte(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, 0x01); // sacar de sleep + elegir reloj
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, 0x01);) // sacar de sleep + elegir reloj
     vTaskDelay(pdMS_TO_TICKS(100));
-    err = mpu6050_register_read(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, data, 1);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "No se pudo leer %s: %s", "PWR_MGMT", esp_err_to_name(err));
-        return;
-    }
-    ESP_LOGI(TAG, "%s = 0x%02X", "PWM_MGMT", data[0]);
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x01);) // Activamos el filtro pasabajo (Chequear config)
+    RCCHECK(mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x04);)
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04);)
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x40);)
 
-    err = mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x01); // Activamos el filtro pasabajo (Chequear config)
-    err = mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x04);
-    err = mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04);
-    err = mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x40);
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78);)
 
-    err = mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78);
-
-    err = mpu6050_register_read(dev_handle, MPU6050_FIFO_EN, data, 1);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "No se pudo LEER %s: %s", "FIFO_EN", esp_err_to_name(err));
-        return;
-    }
-    ESP_LOGI(TAG, "%s = 0x%02X", "FIFO_EN", data[0]);
-
-    /*
     #if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || \
         defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
 
@@ -310,6 +335,7 @@ void app_main(void)
 
     #endif
 
+
     xTaskCreate(
     micro_ros_task,
     "micro_ros_task",
@@ -317,5 +343,4 @@ void app_main(void)
     NULL,
     MICRO_ROS_APP_TASK_PRIO,
     NULL);
-    */
 }
