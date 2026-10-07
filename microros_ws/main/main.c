@@ -57,7 +57,6 @@
 #endif
 
 static const char *TAG = "micro_ros";
-static uint8_t data[2];
 static i2c_master_bus_handle_t bus_handle;
 static i2c_master_dev_handle_t dev_handle;
 
