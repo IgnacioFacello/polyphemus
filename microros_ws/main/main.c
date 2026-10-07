@@ -305,31 +305,14 @@ void micro_ros_task(void *arg)
  * ============================================================ */
 void app_main(void)
 {
-    // Interrupt Begin
     xSemaphore = xSemaphoreCreateBinary();
 
-	// set the correct direction
 	gpio_set_direction(CONFIG_INT_PIN, GPIO_MODE_INPUT);
-    gpio_set_direction(CONFIG_LED_PIN, GPIO_MODE_OUTPUT);
 
     gpio_set_intr_type(
         CONFIG_INT_PIN, // gpio_num_t,
-        GPIO_INTR_NEGEDGE // gpio_int_type_t
+        GPIO_INTR_POSEDGE // gpio_int_type_t
     );
-
-    xTaskCreate(sensor_task, "sensor_task",
-        2048, NULL,
-        10, NULL
-    );
-
-    gpio_install_isr_service(0);
-
-    gpio_isr_handler_add(
-        CONFIG_LED_PIN,
-        button_isr_handler,
-        NULL
-    );
-    // Interrupt End
 
     i2c_master_init(&bus_handle, &dev_handle);
     if (dev_handle == NULL)
@@ -347,8 +330,22 @@ void app_main(void)
             uros_network_interface_initialize());
 
     #endif
+    */
 
+    xTaskCreate(sensor_task, "sensor_task",
+        2048, NULL,
+        10, NULL
+    );
 
+    gpio_install_isr_service(0);
+
+    gpio_isr_handler_add(
+        CONFIG_INT_PIN,
+        button_isr_handler,
+        NULL
+    );
+
+    /*
     xTaskCreate(
     micro_ros_task,
     "micro_ros_task",
@@ -356,4 +353,5 @@ void app_main(void)
     NULL,
     MICRO_ROS_APP_TASK_PRIO,
     NULL);
+    */
 }
