@@ -105,8 +105,30 @@ void IRAM_ATTR button_isr_handler(void* arg) {
   xSemaphoreGiveFromISR(xSemaphore, NULL);
 }
 
+rcl_ret_t configure_mpu(i2c_master_dev_handle_t dev_handle){
+    if (dev_handle == NULL)
+    {
+        ESP_LOGE(TAG, "Error initializing I2C");
+        return RCL_RET_ERROR;
+    }
+
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, 0x01)); // sacar de sleep + elegir reloj
+    vTaskDelay(pdMS_TO_TICKS(100));
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x01)); // Activamos el filtro pasabajo (Chequear config)
+    RCCHECK(mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x04));
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04));
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x40));
+
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78));
+
+    return RCL_RET_OK;
+}
+
 void sensor_task(void* arg) {
     mpu6050_data_t * data_p = malloc(sizeof(mpu6050_data_t));
+
+    configure_mpu(dev_handle);
+
     for(;;) {
     if(xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
         /* NOTE: Data is writen to the FIFO in order of register number (lowest to highest)
@@ -317,15 +339,7 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "I2C initialized successfully");
 
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, 0x01);) // sacar de sleep + elegir reloj
-    vTaskDelay(pdMS_TO_TICKS(100));
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x01);) // Activamos el filtro pasabajo (Chequear config)
-    RCCHECK(mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x04);)
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04);)
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x40);)
-
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78);)
-
+    /*
     #if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || \
         defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
 
