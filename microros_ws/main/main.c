@@ -71,15 +71,19 @@ void IRAM_ATTR button_isr_handler(void* arg) {
 }
 
 void sensor_task(void* arg) {
+    uint8_t fifo_counter = 0;
     for(;;) {
-    if(xSemaphoreTake(xSemaphore,portMAX_DELAY) == pdTRUE) {
-        for (uint8_t i=0x3B; i<=0x40; i++) {
-            // GET ACCELEROMETER DATA
+    if(xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
+        // GET FIFO COUNTER FROM IMU
+        /* NOTE: Data is writen to the FIFO in order of register number (lowest to highest)
+         * 0-5 ACCELEROMETER 6-11 GYROSCOPE
+         */
+        if (fifo_counter > 12){ ESP_LOGI(TAG, "Fifo counter gt 12"); }
+        for (uint8_t i=0x0; i<=fifo_counter; i++) {
+            // GET ACCELEROMETER AND GYROSCOPE DATA
+            // SAVE TO MSG OR AUX_STRUCTURE
         }
-        for (uint8_t i=0x43; i<=0x48; i++) {
-            // GET GYROSCOPE DATA
-        }
-        RCSOFTCHECK(rcl_publish(&pose_publisher, &pose_msg, NULL));
+        RCSOFTCHECK(rcl_publish(&pose_publisher, &pose_msg, NULL);)
     }
   }
 }
