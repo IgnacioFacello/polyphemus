@@ -334,6 +334,11 @@ void micro_ros_task(void *arg)
     }
     */
 
+    xTaskCreate(mpu_task, "mpu_task", 4096, NULL, 10, &s_mpu_task);
+    if (mpu_init() != ESP_OK) {
+        ESP_LOGE(TAG, "MPU6050 init failed - check wiring/address");
+    }
+
     while (1)
     {
         rclc_executor_spin_some(
@@ -351,12 +356,6 @@ void micro_ros_task(void *arg)
 void app_main(void)
 {
 
-    xTaskCreate(mpu_task, "mpu_task", 4096, NULL, 10, &s_mpu_task);
-    if (mpu_init() != ESP_OK) {
-        ESP_LOGE(TAG, "MPU6050 init failed - check wiring/address");
-    }
-
-    /*
     #if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || \
         defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
 
@@ -364,9 +363,7 @@ void app_main(void)
             uros_network_interface_initialize());
 
     #endif
-    */
 
-    /*
     xTaskCreate(
     micro_ros_task,
     "micro_ros_task",
@@ -374,5 +371,4 @@ void app_main(void)
     NULL,
     MICRO_ROS_APP_TASK_PRIO,
     NULL);
-    */
 }
