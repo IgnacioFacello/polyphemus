@@ -167,6 +167,8 @@ static void mpu_task(void *arg)
             	data_p->gx = v[3] / GYRO_LSB_PER_DPS;
             	data_p->gy = v[4] / GYRO_LSB_PER_DPS;
             	data_p->gz = v[5] / GYRO_LSB_PER_DPS;
+
+                /* LuUUuUuUUuUUuUUu ACA PROCESAMOS DATOS Y GENERAMOS CUATERNION */
             } else {
                 ESP_LOGW(TAG, "MPU read failed");
             }
