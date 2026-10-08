@@ -7,9 +7,10 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
-
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_check.h"
 #include "sdkconfig.h"
 
 #include "driver/mpu6050.h"
@@ -56,6 +57,9 @@
 #define DOMAIN_ID 0
 #endif
 
+#define FILTER_H 0xFF
+#define FILTER_L 0xFF
+
 static const char *TAG = "micro_ros";
 static i2c_master_bus_handle_t bus_handle;
 static i2c_master_dev_handle_t dev_handle;
@@ -63,109 +67,126 @@ static i2c_master_dev_handle_t dev_handle;
 static rcl_publisher_t pose_publisher;
 static geometry_msgs__msg__PoseStamped pose_msg;
 
-SemaphoreHandle_t xSemaphore = NULL;
+static TaskHandle_t s_mpu_task = NULL;
 
-rcl_ret_t mpu6050_receive_fifo (
-    i2c_master_dev_handle_t dev_handle,
-	mpu6050_data_t *data_p
-) {
-	uint8_t fifo[FIFO_BURST_LEN];
-	rcl_ret_t err = RCL_RET_OK;
-
-	// Read specified FIFO buffer size (depends on configuration set)
-	err = mpu6050_register_read(dev_handle, MPU6050_FIFO_R_W,
-	fifo, FIFO_BURST_LEN);
-	if (err != RCL_RET_OK) {
-	    ESP_LOGW(TAG, "Error reading FIFO buffer: %d", err);
-	    return err;
-	}
-	// Configure data structure
-	data_p->ax = (int16_t)fifo[0]  << 8  | (int16_t)fifo[1];
-	data_p->ay = (int16_t)fifo[2]  << 8  | (int16_t)fifo[3];
-	data_p->az = (int16_t)fifo[4]  << 8  | (int16_t)fifo[5];
-	data_p->gx = (int16_t)fifo[6]  << 8  | (int16_t)fifo[7];
-	data_p->gy = (int16_t)fifo[8]  << 8  | (int16_t)fifo[9];
-	data_p->gz = (int16_t)fifo[10] << 8  | (int16_t)fifo[11];
-
-	return err;
+esp_err_t mpu_write(uint8_t reg, uint8_t data){
+    return mpu6050_register_write_byte(dev_handle, reg, data);
 }
 
-void leer_fifo_count(uint16_t *count)
+esp_err_t mpu_read(uint8_t reg, uint8_t * data, uint8_t len){
+    return mpu6050_register_read(dev_handle, reg, data, len);
+}
+
+static void IRAM_ATTR mpu_isr(void *arg)
 {
-    uint8_t buffer[2];
-    rcl_ret_t err = RCL_RET_OK;
-
-    err = mpu6050_register_read(dev_handle, MPU6050_FIFO_COUNT_H, buffer, 2);
-    if (err != RCL_RET_OK) {
-        ESP_LOGE(TAG, "Error reading FIFO count: %d", err);
-        *count = 0;
-        return;
+    BaseType_t woken = pdFALSE;
+    if (s_mpu_task) {
+        vTaskNotifyGiveFromISR(s_mpu_task, &woken);
     }
-
-    // buffer[0] tiene FIFO_COUNT_H
-    // buffer[1] tiene FIFO_COUNT_L
-    *count = ((uint16_t)buffer[0] << 8) | buffer[1];
+    portYIELD_FROM_ISR(woken);
 }
 
-void IRAM_ATTR button_isr_handler(void* arg) {
-  xSemaphoreGiveFromISR(xSemaphore, NULL);
-}
+static esp_err_t mpu_init(void)
+{
+    i2c_master_init(&bus_handle, &dev_handle);
 
-rcl_ret_t configure_mpu(i2c_master_dev_handle_t dev_handle){
-    rcl_ret_t err = RCL_RET_OK;
-    uint8_t data[1] = {0};
-    if (dev_handle == NULL)
-    {
-        ESP_LOGE(TAG, "Error initializing I2C");
-        return RCL_RET_ERROR;
+    /* Identify */
+    uint8_t who = 0;
+    ESP_RETURN_ON_ERROR(mpu_read(MPU6050_WHO_AM_I_REG_ADDR, &who, 1), TAG, "WHO_AM_I read failed");
+    ESP_LOGI(TAG, "MPU WHO_AM_I = 0x%02X", who);
+    if (who != 0x68) {
+        ESP_LOGW(TAG, "Unexpected WHO_AM_I (expected 0x68). Clone chips may differ; continuing.");
     }
 
-    err = mpu6050_register_read(dev_handle, MPU6050_WHO_AM_I_REG_ADDR, data, 1);
-    if (err != RCL_RET_OK) {
-        ESP_LOGE(TAG, "Error reading WHO_AM_I register: %d", err);
-        return err;
-    }
-    ESP_LOGI(TAG, "WHO_AM_I = 0x%02X (esperado 0x68)", data[0]);
-
-    // Configure MPU power profile, wait until it stabilizes
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, 0x01)); // sacar de sleep + elegir reloj
+    /* Reset, then wake up with gyro X PLL clock */
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_PWR_MGMT_1_REG_ADDR, 0x80), TAG, "reset failed");
     vTaskDelay(pdMS_TO_TICKS(100));
-    // Configure LPF and sample rate
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x03)); // Activamos el filtro pasabajo (Chequear config)
-    RCCHECK(mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x63)); // 1000khz / (99+1) = 10hz
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_ACCEL_CONFIG, 0x00)); // 0b0000_0100 FIFO_RESET
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_GYRO_CONFIG, 0x00)); // 0b0000_0100 FIFO_RESET
-    // Reset and enable FIFO
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04)); // 0b0000_0100 FIFO_RESET
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x40)); // 0b0100_0000 FIFO_EN
-    // Enable and configure interrupts
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_INT_ENABLE, 0x01));
-    // Configure FIFO
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78));    // 0b0111_1000
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_PWR_MGMT_1_REG_ADDR, 0x01), TAG, "wake failed");
+    vTaskDelay(pdMS_TO_TICKS(10));
 
-    return RCL_RET_OK;
+    /* DLPF = 3 (44 Hz accel / 42 Hz gyro) -> gyro output rate = 1 kHz */
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_CONFIG, 0x03), TAG, "CONFIG failed");
+
+    /* Sample rate = 1000 / (1 + SMPLRT_DIV) */
+    uint8_t div = (uint8_t)(1000 / CONFIG_SAMPLE_RATE - 1);
+    ESP_RETURN_ON_ERROR(mpu_write(SMPLRT_DIV, div), TAG, "SMPLRT_DIV failed");
+    ESP_LOGI(TAG, "MPU sample rate: %d Hz (SMPLRT_DIV=%u)",
+             1000 / (1 + div), div);
+
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_GYRO_CONFIG, 0x00), TAG, "GYRO_CONFIG failed");   /* +-250 dps */
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_ACCEL_CONFIG, 0x00), TAG, "ACCEL_CONFIG failed"); /* +-2 g */
+
+    /* INT pin: active high, push-pull, 50 us pulse, cleared on any read */
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_INT_PIN_CFG, 0x10), TAG, "INT_PIN_CFG failed");
+
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_RESET, 0x04), TAG, "fifo reset failed"); // 0b0000_0100 FIFO_RESET
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_RESET, 0x40), TAG, "fifo enable failed"); // 0b0100_0000 FIFO_EN
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_EN,    0x78), TAG, "fifo config failed");    // 0b0111_1000
+
+    /* ESP32 GPIO for INT (set up BEFORE enabling the interrupt on the MPU) */
+    gpio_config_t io = {
+        .pin_bit_mask = 1ULL << CONFIG_INT_PIN,
+        .mode = GPIO_MODE_INPUT,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type = GPIO_INTR_POSEDGE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io));
+    ESP_ERROR_CHECK(gpio_install_isr_service(0));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(CONFIG_INT_PIN, mpu_isr, NULL));
+
+    /* Enable Data Ready interrupt */
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_INT_ENABLE, 0x01), TAG, "INT_ENABLE failed");
+
+    return ESP_OK;
 }
 
-void sensor_task(void* arg) {
-    uint16_t fifo_count = 0;
+static void mpu_task(void *arg)
+{
+    uint8_t fifo[FIFO_BURST_LEN];
+    uint8_t fifo_count[2];
+    uint32_t irq_count = 0;
+    int64_t t_start = esp_timer_get_time();
     mpu6050_data_t * data_p = malloc(sizeof(mpu6050_data_t));
 
-    configure_mpu(dev_handle);
+    while (1) {
+        /* Wait for the data-ready interrupt (timeout lets us detect a dead INT line) */
+        uint32_t n = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+        if (n > 0) {
+            irq_count += n;
+            if (mpu_read(MPU6050_FIFO_COUNT_H, fifo_count, 2) == RCL_RET_OK) {
+                if ((fifo_count[0] << 8 | fifo_count[1]) > FIFO_BURST_LEN) {
+                    ESP_LOGW(TAG, "FIFO count overflowing: %d", fifo_count[0] << 8 | fifo_count[1]);
+                }
+            }
+            if (mpu_read(MPU6050_FIFO_R_W, fifo, FIFO_BURST_LEN) == RCL_RET_OK) {
+                int16_t v[6];
+                for (int i = 0; i < 6; i++) {
+                    v[i] = (int16_t)((fifo[2 * i] << 8) | fifo[2 * i + 1]);
+                }
+            	data_p->ax = v[0] / ACCEL_LSB_PER_G;
+            	data_p->ay = v[1] / ACCEL_LSB_PER_G;
+            	data_p->az = v[2] / ACCEL_LSB_PER_G;
+            	data_p->gx = v[4] / GYRO_LSB_PER_DPS;
+            	data_p->gy = v[5] / GYRO_LSB_PER_DPS;
+            	data_p->gz = v[6] / GYRO_LSB_PER_DPS;
+            } else {
+                ESP_LOGW(TAG, "MPU read failed");
+            }
+        }
 
-    for(;;) {
-    if(xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
-        /* NOTE: Data is writen to the FIFO in order of register number (lowest to highest)
-         * 0-5 ACCELEROMETER 6-11 GYROSCOPE
-         */
-        leer_fifo_count(&fifo_count);
-        ESP_LOGI(TAG, "Fifo Count: %d", fifo_count);
-        RCSOFTCHECK(mpu6050_receive_fifo(dev_handle, data_p));
-        ESP_LOGI(TAG, "Accelerometer: ax=%d, ay=%d, az=%d", data_p->ax, data_p->ay, data_p->az);
-        ESP_LOGI(TAG, "Gyroscope: gx=%d, gy=%d, gz=%d", data_p->gx, data_p->gy, data_p->gz);
-        //RCSOFTCHECK(rcl_publish(&pose_publisher, &pose_msg, NULL);)
-        //RCSOFTCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04));
+        int64_t now = esp_timer_get_time();
+        if (now - t_start >= 1000000) {
+            float rate = irq_count / ((now - t_start) / 1e6f);
+            printf("MPU INT rate: %.1f Hz | Acc[g] %.3f %.3f %.3f | Gyro[dps] %.2f %.2f %.2f\n",
+                   rate, data_p->ax, data_p->ay, data_p->az,
+                   data_p->gx, data_p->gy, data_p->gz);
+            if (irq_count == 0) {
+                ESP_LOGW(TAG, "No MPU interrupts received - check INT wiring (GPIO%d)", CONFIG_INT_PIN);
+            }
+            irq_count = 0;
+            t_start = now;
+        }
     }
-  }
 }
 
 void micro_ros_task(void *arg)
@@ -331,22 +352,11 @@ void micro_ros_task(void *arg)
  * ============================================================ */
 void app_main(void)
 {
-    xSemaphore = xSemaphoreCreateBinary();
 
-	gpio_set_direction(CONFIG_INT_PIN, GPIO_MODE_INPUT);
-
-    gpio_set_intr_type(
-        CONFIG_INT_PIN, // gpio_num_t,
-        GPIO_INTR_POSEDGE // gpio_int_type_t
-    );
-
-    i2c_master_init(&bus_handle, &dev_handle);
-    if (dev_handle == NULL)
-    {
-        ESP_LOGE(TAG, "Error initializing I2C");
-        return;
+    xTaskCreate(mpu_task, "mpu_task", 4096, NULL, 10, &s_mpu_task);
+    if (mpu_init() != ESP_OK) {
+        ESP_LOGE(TAG, "MPU6050 init failed - check wiring/address");
     }
-    ESP_LOGI(TAG, "I2C initialized successfully");
 
     /*
     #if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || \
@@ -357,19 +367,6 @@ void app_main(void)
 
     #endif
     */
-
-    xTaskCreate(sensor_task, "sensor_task",
-        4096, NULL,
-        10, NULL
-    );
-
-    gpio_install_isr_service(0);
-
-    gpio_isr_handler_add(
-        CONFIG_INT_PIN,
-        button_isr_handler,
-        NULL
-    );
 
     /*
     xTaskCreate(

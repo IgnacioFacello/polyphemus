@@ -17,12 +17,16 @@
 #define MPU6050_ACCEL_CONFIG 0x1C
 #define MPU6050_GYRO_CONFIG 0x1B
 #define SMPLRT_DIV 0x19
+#define MPU6050_INT_PIN_CFG 0x37
+
+#define ACCEL_LSB_PER_G 16384.0f
+#define GYRO_LSB_PER_DPS 131.0f
 
 #define FIFO_BURST_LEN 12
 
 typedef struct {
-	int16_t ax, ay, az;
-	int16_t gx, gy, gz;
+	float ax, ay, az;
+	float gx, gy, gz;
 } mpu6050_data_t;
 
 esp_err_t mpu6050_register_read(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr, uint8_t *data, size_t len);
