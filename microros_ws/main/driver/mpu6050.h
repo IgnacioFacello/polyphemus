@@ -25,6 +25,7 @@
 #define FIFO_BURST_LEN 12
 
 typedef struct {
+    float qx, qy, qz, qw;
 	float ax, ay, az;
 	float gx, gy, gz;
 } mpu6050_data_t;
