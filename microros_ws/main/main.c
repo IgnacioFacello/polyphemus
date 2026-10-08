@@ -164,9 +164,9 @@ static void mpu_task(void *arg)
             	data_p->ax = v[0] / ACCEL_LSB_PER_G;
             	data_p->ay = v[1] / ACCEL_LSB_PER_G;
             	data_p->az = v[2] / ACCEL_LSB_PER_G;
-            	data_p->gx = v[4] / GYRO_LSB_PER_DPS;
-            	data_p->gy = v[5] / GYRO_LSB_PER_DPS;
-            	data_p->gz = v[6] / GYRO_LSB_PER_DPS;
+            	data_p->gx = v[3] / GYRO_LSB_PER_DPS;
+            	data_p->gy = v[4] / GYRO_LSB_PER_DPS;
+            	data_p->gz = v[5] / GYRO_LSB_PER_DPS;
             } else {
                 ESP_LOGW(TAG, "MPU read failed");
             }
