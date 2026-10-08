@@ -102,10 +102,10 @@ static esp_err_t mpu_init(void)
     ESP_RETURN_ON_ERROR(mpu_write(MPU6050_PWR_MGMT_1_REG_ADDR, 0x80), TAG, "reset failed");
     vTaskDelay(pdMS_TO_TICKS(100));
     ESP_RETURN_ON_ERROR(mpu_write(MPU6050_PWR_MGMT_1_REG_ADDR, 0x01), TAG, "wake failed");
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-    /* DLPF = 3 (44 Hz accel / 42 Hz gyro) -> gyro output rate = 1 kHz */
-    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_CONFIG, 0x03), TAG, "CONFIG failed");
+    /* DLPF = 4 (21 Hz accel / 20 Hz gyro) -> gyro output rate = 1 kHz */
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_CONFIG, 0x04), TAG, "CONFIG failed");
 
     /* Sample rate = 1000 / (1 + SMPLRT_DIV) */
     uint8_t div = (uint8_t)(1000 / CONFIG_SAMPLE_RATE - 1);
