@@ -64,6 +64,7 @@ static rcl_publisher_t pose_publisher;
 static geometry_msgs__msg__PoseStamped pose_msg;
 
 SemaphoreHandle_t xSemaphore = NULL;
+
 rcl_ret_t mpu6050_receive_fifo (
     i2c_master_dev_handle_t dev_handle,
 	mpu6050_data_t *data_p
@@ -72,13 +73,12 @@ rcl_ret_t mpu6050_receive_fifo (
 	rcl_ret_t err = RCL_RET_OK;
 
 	// Read specified FIFO buffer size (depends on configuration set)
-	for (uint8_t i = 0; i < FIFO_BURST_LEN; ++i) {
-		if ((err = mpu6050_register_read(dev_handle, MPU6050_FIFO_R_W,
-		fifo+i, 1)) != RCL_RET_OK) {
-			break;
-		}
+	err = mpu6050_register_read(dev_handle, MPU6050_FIFO_R_W,
+	fifo, FIFO_BURST_LEN);
+	if (err != RCL_RET_OK) {
+	    ESP_LOGW(TAG, "Error reading FIFO buffer: %d", err);
+	    return err;
 	}
-
 	// Configure data structure
 	data_p->ax = (int16_t)fifo[0]  << 8  | (int16_t)fifo[1];
 	data_p->ay = (int16_t)fifo[2]  << 8  | (int16_t)fifo[3];
@@ -93,8 +93,14 @@ rcl_ret_t mpu6050_receive_fifo (
 void leer_fifo_count(uint16_t *count)
 {
     uint8_t buffer[2];
+    rcl_ret_t err = RCL_RET_OK;
 
-    RCCHECK(mpu6050_register_read(dev_handle, MPU6050_FIFO_COUNT_H, buffer, 2);)
+    err = mpu6050_register_read(dev_handle, MPU6050_FIFO_COUNT_H, buffer, 2);
+    if (err != RCL_RET_OK) {
+        ESP_LOGE(TAG, "Error reading FIFO count: %d", err);
+        *count = 0;
+        return;
+    }
 
     // buffer[0] tiene FIFO_COUNT_H
     // buffer[1] tiene FIFO_COUNT_L
@@ -106,25 +112,42 @@ void IRAM_ATTR button_isr_handler(void* arg) {
 }
 
 rcl_ret_t configure_mpu(i2c_master_dev_handle_t dev_handle){
+    rcl_ret_t err = RCL_RET_OK;
+    uint8_t data[1] = {0};
     if (dev_handle == NULL)
     {
         ESP_LOGE(TAG, "Error initializing I2C");
         return RCL_RET_ERROR;
     }
 
+    err = mpu6050_register_read(dev_handle, MPU6050_WHO_AM_I_REG_ADDR, data, 1);
+    if (err != RCL_RET_OK) {
+        ESP_LOGE(TAG, "Error reading WHO_AM_I register: %d", err);
+        return err;
+    }
+    ESP_LOGI(TAG, "WHO_AM_I = 0x%02X (esperado 0x68)", data[0]);
+
+    // Configure MPU power profile, wait until it stabilizes
     RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, 0x01)); // sacar de sleep + elegir reloj
     vTaskDelay(pdMS_TO_TICKS(100));
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x01)); // Activamos el filtro pasabajo (Chequear config)
-    RCCHECK(mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x04));
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04));
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x40));
-
-    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78));
+    // Configure LPF and sample rate
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x03)); // Activamos el filtro pasabajo (Chequear config)
+    RCCHECK(mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x63)); // 1000khz / (99+1) = 10hz
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_ACCEL_CONFIG, 0x00)); // 0b0000_0100 FIFO_RESET
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_GYRO_CONFIG, 0x00)); // 0b0000_0100 FIFO_RESET
+    // Reset and enable FIFO
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04)); // 0b0000_0100 FIFO_RESET
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x40)); // 0b0100_0000 FIFO_EN
+    // Enable and configure interrupts
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_INT_ENABLE, 0x01));
+    // Configure FIFO
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78));    // 0b0111_1000
 
     return RCL_RET_OK;
 }
 
 void sensor_task(void* arg) {
+    uint16_t fifo_count = 0;
     mpu6050_data_t * data_p = malloc(sizeof(mpu6050_data_t));
 
     configure_mpu(dev_handle);
@@ -134,10 +157,13 @@ void sensor_task(void* arg) {
         /* NOTE: Data is writen to the FIFO in order of register number (lowest to highest)
          * 0-5 ACCELEROMETER 6-11 GYROSCOPE
          */
-        mpu6050_receive_fifo(dev_handle, data_p);
+        leer_fifo_count(&fifo_count);
+        ESP_LOGI(TAG, "Fifo Count: %d", fifo_count);
+        RCSOFTCHECK(mpu6050_receive_fifo(dev_handle, data_p));
         ESP_LOGI(TAG, "Accelerometer: ax=%d, ay=%d, az=%d", data_p->ax, data_p->ay, data_p->az);
         ESP_LOGI(TAG, "Gyroscope: gx=%d, gy=%d, gz=%d", data_p->gx, data_p->gy, data_p->gz);
         //RCSOFTCHECK(rcl_publish(&pose_publisher, &pose_msg, NULL);)
+        //RCSOFTCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04));
     }
   }
 }
@@ -333,7 +359,7 @@ void app_main(void)
     */
 
     xTaskCreate(sensor_task, "sensor_task",
-        2048, NULL,
+        4096, NULL,
         10, NULL
     );
 
