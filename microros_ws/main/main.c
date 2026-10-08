@@ -57,9 +57,6 @@
 #define DOMAIN_ID 0
 #endif
 
-#define FILTER_H 0xFF
-#define FILTER_L 0xFF
-
 static const char *TAG = "micro_ros";
 static i2c_master_bus_handle_t bus_handle;
 static i2c_master_dev_handle_t dev_handle;
@@ -119,9 +116,10 @@ static esp_err_t mpu_init(void)
     /* INT pin: active high, push-pull, 50 us pulse, cleared on any read */
     ESP_RETURN_ON_ERROR(mpu_write(MPU6050_INT_PIN_CFG, 0x10), TAG, "INT_PIN_CFG failed");
 
-    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_RESET, 0x04), TAG, "fifo reset failed"); // 0b0000_0100 FIFO_RESET
-    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_RESET, 0x40), TAG, "fifo enable failed"); // 0b0100_0000 FIFO_EN
-    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_EN,    0x78), TAG, "fifo config failed");    // 0b0111_1000
+    /* FIFO: reset enabnle and configure */
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_RESET, 0x04), TAG, "fifo reset failed");
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_RESET, 0x40), TAG, "fifo enable failed");
+    ESP_RETURN_ON_ERROR(mpu_write(MPU6050_FIFO_EN,    0x78), TAG, "fifo config failed"); // Enable Gyro and Accel
 
     /* ESP32 GPIO for INT (set up BEFORE enabling the interrupt on the MPU) */
     gpio_config_t io = {
