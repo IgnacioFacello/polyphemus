@@ -7,10 +7,9 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
-#include "esp_timer.h"
+
 #include "esp_log.h"
 #include "esp_err.h"
-#include "esp_check.h"
 #include "sdkconfig.h"
 
 #include "driver/mpu6050.h"
@@ -21,8 +20,8 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
-#include <geometry_msgs/msg/pose_stamped.h>
-#include <math.h>
+// #include <geometry_msgs/msg/pose_stamped.h>
+#include <sensor_msgs/msg/imu.h>
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 #include <rmw_microros/rmw_microros.h>
@@ -62,115 +61,116 @@ static const char *TAG = "micro_ros";
 static i2c_master_bus_handle_t bus_handle;
 static i2c_master_dev_handle_t dev_handle;
 
-static rcl_publisher_t pose_publisher;
-static geometry_msgs__msg__PoseStamped pose_msg;
+rcl_publisher_t imu_publisher;
+sensor_msgs__msg__Imu imu_msg;
 
-static TaskHandle_t s_mpu_task = NULL;
+SemaphoreHandle_t xSemaphore = NULL;
 
-static void IRAM_ATTR mpu_isr(void *arg)
-{
-    BaseType_t woken = pdFALSE;
-    if (s_mpu_task) {
-        vTaskNotifyGiveFromISR(s_mpu_task, &woken);
-    }
-    portYIELD_FROM_ISR(woken);
+rcl_ret_t mpu6050_receive_fifo (
+    i2c_master_dev_handle_t dev_handle,
+	mpu6050_data_t *data_p
+) {
+	uint8_t fifo[FIFO_BURST_LEN];
+	rcl_ret_t err = RCL_RET_OK;
+
+	// Read specified FIFO buffer size (depends on configuration set)
+	err = mpu6050_register_read(dev_handle, MPU6050_FIFO_R_W,
+	fifo, FIFO_BURST_LEN);
+	if (err != RCL_RET_OK) {
+	    ESP_LOGW(TAG, "Error reading FIFO buffer: %d", err);
+	    return err;
+	}
+	// Configure data structure
+	data_p->ax = (int16_t)fifo[0]  << 8  | (int16_t)fifo[1];
+	data_p->ay = (int16_t)fifo[2]  << 8  | (int16_t)fifo[3];
+	data_p->az = (int16_t)fifo[4]  << 8  | (int16_t)fifo[5];
+	data_p->gx = (int16_t)fifo[6]  << 8  | (int16_t)fifo[7];
+	data_p->gy = (int16_t)fifo[8]  << 8  | (int16_t)fifo[9];
+	data_p->gz = (int16_t)fifo[10] << 8  | (int16_t)fifo[11];
+
+	return err;
 }
 
-
-static esp_err_t mpu_init(void)
+void leer_fifo_count(uint16_t *count)
 {
-    i2c_master_init(&bus_handle, &dev_handle);
+    uint8_t buffer[2];
+    rcl_ret_t err = RCL_RET_OK;
 
-    uint8_t who = 0;
-    ESP_RETURN_ON_ERROR(mpu6050_register_read(dev_handle, MPU6050_WHO_AM_I_REG_ADDR, &who, 1), TAG, "WHO_AM_I");
-    ESP_LOGI(TAG, "MPU WHO_AM_I = 0x%02X", who);
+    err = mpu6050_register_read(dev_handle, MPU6050_FIFO_COUNT_H, buffer, 2);
+    if (err != RCL_RET_OK) {
+        ESP_LOGE(TAG, "Error reading FIFO count: %d", err);
+        *count = 0;
+        return;
+    }
 
-    ESP_RETURN_ON_ERROR(mpu6050_dmp_prepare(dev_handle), TAG, "DMP init");
-
-    /* Configurar GPIO e ISR antes de habilitar las interrupciones del MPU. */
-    gpio_config_t io = {
-        .pin_bit_mask = 1ULL << CONFIG_INT_PIN,
-        .mode = GPIO_MODE_INPUT,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
-        .intr_type = GPIO_INTR_POSEDGE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&io));
-    ESP_ERROR_CHECK(gpio_install_isr_service(0));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(CONFIG_INT_PIN, mpu_isr, NULL));
-
-    return mpu6050_dmp_start(dev_handle);
+    // buffer[0] tiene FIFO_COUNT_H
+    // buffer[1] tiene FIFO_COUNT_L
+    *count = ((uint16_t)buffer[0] << 8) | buffer[1];
 }
 
-static void mpu_task(void *arg)
-{
-    uint8_t pkt[DMP_PACKET_SIZE];
-    uint16_t count = 0;
-    uint32_t irq_count = 0, pkt_count = 0;
-    int64_t t_start = esp_timer_get_time();
+void IRAM_ATTR button_isr_handler(void* arg) {
+  xSemaphoreGiveFromISR(xSemaphore, NULL);
+}
 
-    float qw = 1, qx = 0, qy = 0, qz = 0;
-    float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
-
-    while (1) {
-        /* Espera la interrupcion del DMP (el timeout permite detectar INT muerta) */
-        uint32_t n = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
-        if (n > 0) {
-            irq_count += n;
-
-            if (mpu6050_dmp_read_fifo_count(dev_handle, &count) == ESP_OK) {
-                if (count >= 1024) {                     /* FIFO desbordado: paquetes desalineados */
-                    ESP_LOGW(TAG, "FIFO overflow, reset");
-                    mpu6050_dmp_reset_fifo(dev_handle);
-                    count = 0;
-                }
-
-                /* Pueden haber varios paquetes acumulados: leer todos los completos */
-                while (count >= DMP_PACKET_SIZE) {
-                    if (mpu6050_dmp_read_fifo_packet(dev_handle, pkt) != ESP_OK) {
-                        ESP_LOGW(TAG, "FIFO read failed");
-                        break;
-                    }
-                    count -= DMP_PACKET_SIZE;
-                    pkt_count++;
-
-                    /* Cuaternion del DMP: 4 x int32 big-endian en Q30 (bytes 0..15) */
-                    int32_t q[4];
-                    for (int i = 0; i < 4; i++) {
-                        q[i] = (int32_t)(((uint32_t)pkt[4*i]   << 24) | ((uint32_t)pkt[4*i+1] << 16) |
-                                         ((uint32_t)pkt[4*i+2] <<  8) |  (uint32_t)pkt[4*i+3]);
-                    }
-                    qw = q[0] / Q30;  qx = q[1] / Q30;
-                    qy = q[2] / Q30;  qz = q[3] / Q30;
-
-                    /* Crudo de la MISMA muestra: gyro en 16/20/24, accel en 28/32/36 */
-                    gx = (int16_t)((pkt[16] << 8) | pkt[17]) / GYRO_LSB_PER_DPS_DMP;
-                    gy = (int16_t)((pkt[20] << 8) | pkt[21]) / GYRO_LSB_PER_DPS_DMP;
-                    gz = (int16_t)((pkt[24] << 8) | pkt[25]) / GYRO_LSB_PER_DPS_DMP;
-                    ax = (int16_t)((pkt[28] << 8) | pkt[29]) / ACCEL_LSB_PER_G_DMP;
-                    ay = (int16_t)((pkt[32] << 8) | pkt[33]) / ACCEL_LSB_PER_G_DMP;
-                    az = (int16_t)((pkt[36] << 8) | pkt[37]) / ACCEL_LSB_PER_G_DMP;
-
-                    /* AQUI: (qw,qx,qy,qz) es la salida del DMP; (ax..gz) son los datos
-                     * crudos de la misma muestra para tu calculo a mano. */
-                }
-            }
-        }
-
-        int64_t now = esp_timer_get_time();
-        if (now - t_start >= 1000000) {
-            float dt = (now - t_start) / 1e6f;
-            printf("INT %.1f Hz | pkt %.1f Hz | q %.3f %.3f %.3f %.3f (|q|=%.3f) | Acc[g] %.3f %.3f %.3f | Gyro[dps] %.2f %.2f %.2f\n",
-                   irq_count / dt, pkt_count / dt, qw, qx, qy, qz,
-                   sqrtf(qw*qw + qx*qx + qy*qy + qz*qz),
-                   ax, ay, az, gx, gy, gz);
-            if (irq_count == 0) {
-                ESP_LOGW(TAG, "No MPU interrupts received - check INT wiring (GPIO%d)", CONFIG_INT_PIN);
-            }
-            irq_count = 0;
-            pkt_count = 0;
-            t_start = now;
-        }
+rcl_ret_t configure_mpu(i2c_master_dev_handle_t dev_handle){
+    rcl_ret_t err = RCL_RET_OK;
+    uint8_t data[1] = {0};
+    if (dev_handle == NULL)
+    {
+        ESP_LOGE(TAG, "Error initializing I2C");
+        return RCL_RET_ERROR;
     }
+
+    err = mpu6050_register_read(dev_handle, MPU6050_WHO_AM_I_REG_ADDR, data, 1);
+    if (err != RCL_RET_OK) {
+        ESP_LOGE(TAG, "Error reading WHO_AM_I register: %d", err);
+        return err;
+    }
+    ESP_LOGI(TAG, "WHO_AM_I = 0x%02X (esperado 0x68)", data[0]);
+
+    // Configure MPU power profile, wait until it stabilizes
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_PWR_MGMT_1_REG_ADDR, 0x01)); // sacar de sleep + elegir reloj
+    vTaskDelay(pdMS_TO_TICKS(100));
+    // Configure LPF and sample rate
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_CONFIG, 0x05)); // Activamos el filtro pasabajo (Chequear config)
+    RCCHECK(mpu6050_register_write_byte(dev_handle, SMPLRT_DIV, 0x04)); // 1000khz / (4+1) = 200hz
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_ACCEL_CONFIG, 0x00)); // 0b0000_0100 FIFO_RESET
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_GYRO_CONFIG, 0x00)); // 0b0000_0100 FIFO_RESET
+    // Reset and enable FIFO
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04)); // 0b0000_0100 FIFO_RESET
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x40)); // 0b0100_0000 FIFO_EN
+    // Enable and configure interrupts
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_INT_ENABLE, 0x01));
+    // Configure FIFO
+    RCCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_EN, 0x78));    // 0b0111_1000
+
+    return RCL_RET_OK;
+}
+
+void sensor_task(void* arg) {
+    uint16_t fifo_count = 0;
+    mpu6050_data_t * data_p = malloc(sizeof(mpu6050_data_t));
+
+    configure_mpu(dev_handle);
+
+    for(;;) {
+    if(xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
+        /* NOTE: Data is writen to the FIFO in order of register number (lowest to highest)
+         * 0-5 ACCELEROMETER 6-11 GYROSCOPE
+         */
+        leer_fifo_count(&fifo_count);
+        ESP_LOGI(TAG, "Fifo Count: %d", fifo_count);
+        RCSOFTCHECK(mpu6050_receive_fifo(dev_handle, data_p));
+        ESP_LOGI(TAG, "Accelerometer: ax=%d, ay=%d, az=%d", data_p->ax, data_p->ay, data_p->az);
+        ESP_LOGI(TAG, "Gyroscope: gx=%d, gy=%d, gz=%d", data_p->gx, data_p->gy, data_p->gz);
+        //RCSOFTCHECK(rcl_publish(&pose_publisher, &pose_msg, NULL);)
+        //RCSOFTCHECK(mpu6050_register_write_byte(dev_handle, MPU6050_FIFO_RESET, 0x04));
+    }
+    imu_msg.oreintacion.x = (float64) data_p_>gx;
+    imu_msg.oreintacion.y = data_p_>gy;
+    imu_msg.oreintacion.z = data_p_>gz;
+    imu_msg.orientation.w = 0
+  }
 }
 
 void micro_ros_task(void *arg)
@@ -280,15 +280,25 @@ void micro_ros_task(void *arg)
     )
 
     RCCHECK(rclc_publisher_init_default(
-        &pose_publisher,
+        &imu_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(
-            geometry_msgs,
+            sensor_msgs,
             msg,
-            PoseStamped
+            Imu
         ),
-        "pose"
+        "imu"
     );)
+    // Inicializar el mensaje (reserva memoria para los strings/arrays internos)
+    sensor_msgs__msg__Imu__init(&imu_msg);
+
+// frame_id: es un string dinámico, hay que asignarlo a mano
+    rosidl_runtime_c__String__assign(&imu_msg.header.frame_id, "imu_link");
+
+// Covarianzas: -1 en el primer elemento = "no estimada" (convención ROS)
+    imu_msg.orientation_covariance[0] = -1;
+
+
 
     /* TODO: Borrar si no usamos el timer
     rcl_timer_t timer =
@@ -336,13 +346,24 @@ void micro_ros_task(void *arg)
  * ============================================================ */
 void app_main(void)
 {
+    xSemaphore = xSemaphoreCreateBinary();
 
-    xTaskCreate(mpu_task, "mpu_task", 4096, NULL, 10, &s_mpu_task);
-    if (mpu_init() != ESP_OK) {
-        ESP_LOGE(TAG, "MPU6050 init failed - check wiring/address");
+	gpio_set_direction(CONFIG_INT_PIN, GPIO_MODE_INPUT);
+
+    gpio_set_intr_type(
+        CONFIG_INT_PIN, // gpio_num_t,
+        GPIO_INTR_POSEDGE // gpio_int_type_t
+    );
+
+    i2c_master_init(&bus_handle, &dev_handle);
+    if (dev_handle == NULL)
+    {
+        ESP_LOGE(TAG, "Error initializing I2C");
+        return;
     }
+    ESP_LOGI(TAG, "I2C initialized successfully");
 
-    /*
+
     #if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || \
         defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
 
@@ -350,9 +371,22 @@ void app_main(void)
             uros_network_interface_initialize());
 
     #endif
-    */
+    
 
-    /*
+    xTaskCreate(sensor_task, "sensor_task",
+        4096, NULL,
+        10, NULL
+    );
+
+    gpio_install_isr_service(0);
+
+    gpio_isr_handler_add(
+        CONFIG_INT_PIN,
+        button_isr_handler,
+        NULL
+    );
+
+    
     xTaskCreate(
     micro_ros_task,
     "micro_ros_task",
@@ -360,5 +394,5 @@ void app_main(void)
     NULL,
     MICRO_ROS_APP_TASK_PRIO,
     NULL);
-    */
+    
 }
