@@ -25,7 +25,7 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
-#include <geometry_msgs/msg/pose_stamped.h>
+#include <sensor_msgs/msg/imu.h>
 #include <math.h>
 
 #ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
@@ -66,8 +66,10 @@ static const char *TAG = "micro_ros";
 static i2c_master_bus_handle_t bus_handle;
 static i2c_master_dev_handle_t dev_handle;
 
-static rcl_publisher_t pose_publisher;
-static geometry_msgs__msg__PoseStamped pose_msg;
+static rcl_publisher_t imu_diy_publisher;
+static sensor_msgs__msg__Imu imu_diy_msg;
+static rcl_publisher_t imu_dmp_publisher;
+static sensor_msgs__msg__Imu imu_dmp_msg;
 
 static TaskHandle_t s_mpu_task = NULL;
 
@@ -329,28 +331,27 @@ void micro_ros_task(void *arg)
         &support);
     )
 
-    RCCHECK(rclc_publisher_init_default(
-        &pose_publisher,
+    RCCHECK(rclc_publisher_init_best_effort(
+        &imu_diy_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(
-            geometry_msgs,
+            sensor_msgs,
             msg,
-            PoseStamped
+            Imu
         ),
-        "pose"
+        "imu_diy"
     );)
 
-    /* TODO: Borrar si no usamos el timer
-    rcl_timer_t timer =
-        rcl_get_zero_initialized_timer();
-
-     RCCHECK(rclc_timer_init_default2(
-        &timer,
-        &support,
-        RCL_MS_TO_NS(TIMER_PERIOD_MS),
-        timer_callback,
-        true);
-    ) */
+    RCCHECK(rclc_publisher_init_best_effort(
+        &imu_dmp_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(
+            sensor_msgs,
+            msg,
+            Imu
+        ),
+        "imu_dmp"
+    );)
 
     rclc_executor_t executor =
         rclc_executor_get_zero_initialized_executor();
