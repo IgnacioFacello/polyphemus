@@ -119,7 +119,8 @@ static esp_err_t mpu_dmp_init(i2c_master_dev_handle_t dev_handle)
     ESP_RETURN_ON_ERROR(mpu_write_reg(dev_handle, DMP_REG_USER_CTRL, 0x02), TAG, "i2c master reset");
     vTaskDelay(pdMS_TO_TICKS(20));
 
-    ESP_RETURN_ON_ERROR(mpu_write_reg(dev_handle, DMP_REG_SMPLRT_DIV, 0x04), TAG, "rate");
+    uint8_t smplrt_div = 1000 / CONFIG_SAMPLE_RATE - 1;
+    ESP_RETURN_ON_ERROR(mpu_write_reg(dev_handle, DMP_REG_SMPLRT_DIV, smplrt_div), TAG, "rate");
     ESP_RETURN_ON_ERROR(mpu_write_reg(dev_handle, DMP_REG_CONFIG, 0x0B), TAG, "config");
     ESP_RETURN_ON_ERROR(mpu_write_reg(dev_handle, DMP_REG_GYRO_CONFIG, 0x18), TAG, "gyro cfg");
 
