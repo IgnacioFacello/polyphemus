@@ -172,16 +172,18 @@ static void mpu_task(void *arg)
                         q[i] = (int32_t)(((uint32_t)pkt[4*i]   << 24) | ((uint32_t)pkt[4*i+1] << 16) |
                                          ((uint32_t)pkt[4*i+2] <<  8) |  (uint32_t)pkt[4*i+3]);
                     }
-                    qw = q[0] / Q30;  qx = q[1] / Q30;
-                    qy = q[2] / Q30;  qz = q[3] / Q30;
+                    imu_dmp_msg.orientation.w = q[0] / Q30;
+                    imu_dmp_msg.orientation.x = q[1] / Q30;
+                    imu_dmp_msg.orientation.y = q[2] / Q30;
+                    imu_dmp_msg.orientation.z = q[3] / Q30;
 
                     /* Crudo de la MISMA muestra: gyro en 16/20/24, accel en 28/32/36 */
-                    gx = (int16_t)((pkt[16] << 8) | pkt[17]) / GYRO_LSB_PER_DPS_DMP;
-                    gy = (int16_t)((pkt[20] << 8) | pkt[21]) / GYRO_LSB_PER_DPS_DMP;
-                    gz = (int16_t)((pkt[24] << 8) | pkt[25]) / GYRO_LSB_PER_DPS_DMP;
-                    ax = (int16_t)((pkt[28] << 8) | pkt[29]) / ACCEL_LSB_PER_G_DMP;
-                    ay = (int16_t)((pkt[32] << 8) | pkt[33]) / ACCEL_LSB_PER_G_DMP;
-                    az = (int16_t)((pkt[36] << 8) | pkt[37]) / ACCEL_LSB_PER_G_DMP;
+                    gyro.gx_dps = (int16_t)((pkt[16] << 8) | pkt[17]) / GYRO_LSB_PER_DPS_DMP;
+                    gyro.gy_dps = (int16_t)((pkt[20] << 8) | pkt[21]) / GYRO_LSB_PER_DPS_DMP;
+                    gyro.gz_dps = (int16_t)((pkt[24] << 8) | pkt[25]) / GYRO_LSB_PER_DPS_DMP;
+                    accel.ax_g = (int16_t)((pkt[28] << 8) | pkt[29]) / ACCEL_LSB_PER_G_DMP;
+                    accel.ay_g = (int16_t)((pkt[32] << 8) | pkt[33]) / ACCEL_LSB_PER_G_DMP;
+                    accel.az_g = (int16_t)((pkt[36] << 8) | pkt[37]) / ACCEL_LSB_PER_G_DMP;
 
                     accelerometer_process(
                         &accel
@@ -192,6 +194,11 @@ static void mpu_task(void *arg)
                         &gyro
                     );
 
+                    msg_load_gyro(&imu_dmp_msg, &gyro);
+                    msg_load_gyro(&imu_diy_msg, &gyro);
+                    msg_load_accel(&imu_dmp_msg, &accel);
+                    msg_load_accel(&imu_diy_msg, &accel);
+
                     complementary_filter_update(
                         &orientation,
                         &accel,
@@ -200,7 +207,11 @@ static void mpu_task(void *arg)
                         COMPLEMENTARY_FILTER_DEFAULT_ALPHA
                     );
 
-                    
+                    msg_load_orientation(&imu_diy_msg, &orientation);
+
+                    RCSOFTCHECK(rcl_publish(&imu_dmp_publisher, &imu_dmp_msg, NULL);)
+                    RCSOFTCHECK(rcl_publish(&imu_diy_publisher, &imu_diy_msg, NULL);)
+
                 }
             }
         }
