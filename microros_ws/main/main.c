@@ -18,6 +18,7 @@
 #include "imu_aux/gyroscope.h"
 #include "imu_aux/quaternion.h"
 #include "imu_aux/complementary_filter.h"
+#include "sensor_msgs/msg/imu.h"
 
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
