@@ -14,6 +14,10 @@
 #include "sdkconfig.h"
 
 #include "driver/mpu6050.h"
+#include "accelerometer.h"
+#include "gyroscope.h"
+#include "quaternion.h"
+#include "complementary_filter.h"
 
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
@@ -111,6 +115,13 @@ static void mpu_task(void *arg)
     float qw = 1, qx = 0, qy = 0, qz = 0;
     float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
 
+    accelerometer_output_t accel;
+    gyroscope_output_t gyro;
+    quaternion_t orientation;
+
+    quaternion_identity(&orientation);
+    const float dt_s = 0.005f;
+
     while (1) {
         /* Espera la interrupcion del DMP (el timeout permite detectar INT muerta) */
         uint32_t n = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
@@ -150,8 +161,30 @@ static void mpu_task(void *arg)
                     ay = (int16_t)((pkt[32] << 8) | pkt[33]) / ACCEL_LSB_PER_G_DMP;
                     az = (int16_t)((pkt[36] << 8) | pkt[37]) / ACCEL_LSB_PER_G_DMP;
 
-                    /* AQUI: (qw,qx,qy,qz) es la salida del DMP; (ax..gz) son los datos
-                     * crudos de la misma muestra para tu calculo a mano. */
+                    accelerometer_process(
+                        ax,
+                        ay,
+                        az,
+                        &accel
+                    );
+
+                    gyroscope_process(
+                        gx,
+                        gy,
+                        gz,
+                        dt_s,
+                        &gyro
+                    );
+
+                    complementary_filter_update(
+                        &orientation,
+                        &accel,
+                        &gyro,
+                        dt_s,
+                        COMPLEMENTARY_FILTER_DEFAULT_ALPHA
+                    );
+
+                    
                 }
             }
         }
@@ -159,10 +192,27 @@ static void mpu_task(void *arg)
         int64_t now = esp_timer_get_time();
         if (now - t_start >= 1000000) {
             float dt = (now - t_start) / 1e6f;
-            printf("INT %.1f Hz | pkt %.1f Hz | q %.3f %.3f %.3f %.3f (|q|=%.3f) | Acc[g] %.3f %.3f %.3f | Gyro[dps] %.2f %.2f %.2f\n",
-                   irq_count / dt, pkt_count / dt, qw, qx, qy, qz,
-                   sqrtf(qw*qw + qx*qx + qy*qy + qz*qz),
-                   ax, ay, az, gx, gy, gz);
+            printf(
+                "INT %.1f Hz | pkt %.1f Hz | "
+                "DMP[wxyz] %.3f %.3f %.3f %.3f | "
+                "CALC[wxyz] %.3f %.3f %.3f %.3f | "
+                "Acc[g] %.3f %.3f %.3f | "
+                "Gyro[dps] %.2f %.2f %.2f\n",
+
+                irq_count / dt,
+                pkt_count / dt,
+
+                qw, qx, qy, qz,
+
+                orientation.w,
+                orientation.x,
+                orientation.y,
+                orientation.z,
+
+                ax, ay, az,
+                gx, gy, gz
+            );
+            
             if (irq_count == 0) {
                 ESP_LOGW(TAG, "No MPU interrupts received - check INT wiring (GPIO%d)", CONFIG_INT_PIN);
             }
