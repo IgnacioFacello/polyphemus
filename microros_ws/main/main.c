@@ -14,10 +14,10 @@
 #include "sdkconfig.h"
 
 #include "driver/mpu6050.h"
-#include "accelerometer.h"
-#include "gyroscope.h"
-#include "quaternion.h"
-#include "complementary_filter.h"
+#include "imu_aux/accelerometer.h"
+#include "imu_aux/gyroscope.h"
+#include "imu_aux/quaternion.h"
+#include "imu_aux/complementary_filter.h"
 
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
