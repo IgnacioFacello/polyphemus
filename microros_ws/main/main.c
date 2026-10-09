@@ -108,6 +108,25 @@ static esp_err_t mpu_init(void)
     return mpu6050_dmp_start(dev_handle);
 }
 
+void msg_load_gyro(sensor_msgs__msg__Imu * msg, gyroscope_output_t * gyro){
+    msg->angular_velocity.x = gyro->delta_x_rad;
+    msg->angular_velocity.y = gyro->delta_y_rad;
+    msg->angular_velocity.z = gyro->delta_z_rad;
+}
+
+void msg_load_accel(sensor_msgs__msg__Imu * msg, accelerometer_output_t * accel){
+    msg->linear_acceleration.x = accel->ax_g * accel->magnitude_g;
+    msg->linear_acceleration.y = accel->ay_g * accel->magnitude_g;
+    msg->linear_acceleration.z = accel->az_g * accel->magnitude_g;
+}
+
+void msg_load_orientation(sensor_msgs__msg__Imu * msg, quaternion_t * q){
+    msg->orientation.w = q->w;
+    msg->orientation.x = q->x;
+    msg->orientation.y = q->y;
+    msg->orientation.z = q->z;
+}
+
 static void mpu_task(void *arg)
 {
     uint8_t pkt[DMP_PACKET_SIZE];
