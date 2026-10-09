@@ -14,6 +14,10 @@
 #include "sdkconfig.h"
 
 #include "driver/mpu6050.h"
+#include "accelerometer.h"
+#include "gyroscope.h"
+#include "quaternion.h"
+#include "complementary_filter.h"
 
 #include <uros_network_interfaces.h>
 #include <rcl/rcl.h>
@@ -145,6 +149,14 @@ static void mpu_task(void *arg)
     uint32_t irq_count = 0;
     int64_t t_start = esp_timer_get_time();
     mpu6050_data_t * data_p = malloc(sizeof(mpu6050_data_t));
+    accelerometer_output_t accel;
+    gyroscope_output_t gyro;
+    quaternion_t orientation;
+
+    quaternion_identity(&orientation);
+
+    const float dt_s =
+        1.0f / (float)CONFIG_SAMPLE_RATE;
 
     while (1) {
         /* Wait for the data-ready interrupt (timeout lets us detect a dead INT line) */
@@ -168,7 +180,40 @@ static void mpu_task(void *arg)
             	data_p->gy = v[4] / GYRO_LSB_PER_DPS;
             	data_p->gz = v[5] / GYRO_LSB_PER_DPS;
 
-                /* LuUUuUuUUuUUuUUu ACA PROCESAMOS DATOS Y GENERAMOS CUATERNION */
+                /* Procesamiento del acelerómetro */
+                accelerometer_process(
+                    data_p->ax,
+                    data_p->ay,
+                    data_p->az,
+                    &accel
+                );
+
+                /* Procesamiento del giroscopio */
+                gyroscope_process(
+                    data_p->gx,
+                    data_p->gy,
+                    data_p->gz,
+                    dt_s,
+                    &gyro
+                );
+
+                /* Fusión accel + gyro y actualización del cuaternión */
+                complementary_filter_update(
+                    &orientation,
+                    &accel,
+                    &gyro,
+                    dt_s,
+                    COMPLEMENTARY_FILTER_DEFAULT_ALPHA
+                );
+
+                /* Guardar resultado */
+                data_p->qw = orientation.w;
+                data_p->qx = orientation.x;
+                data_p->qy = orientation.y;
+                data_p->qz = orientation.z;
+
+
+                
 
                 /* ACA PUBLICAMOS LOS DATOS UNA VEZ PROCESADOS */
             } else {

@@ -2,6 +2,10 @@ idf_component_register(
   SRCS
     "main.c"
     "driver/mpu6050.c"
+    "accelerometer.c"
+    "gyroscope.c"
+    "quaternion.c"
+    "complementary_filter.c"
 
   INCLUDE_DIRS
     "."
