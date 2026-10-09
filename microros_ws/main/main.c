@@ -184,16 +184,10 @@ static void mpu_task(void *arg)
                     az = (int16_t)((pkt[36] << 8) | pkt[37]) / ACCEL_LSB_PER_G_DMP;
 
                     accelerometer_process(
-                        ax,
-                        ay,
-                        az,
                         &accel
                     );
 
                     gyroscope_process(
-                        gx,
-                        gy,
-                        gz,
                         dt_s,
                         &gyro
                     );
