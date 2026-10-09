@@ -191,8 +191,9 @@ static void mpu_task(void *arg)
             }
         }
 
-        int64_t now = esp_timer_get_time();
-        if (now - t_start >= 1000000) {
+        #if CONFIG_ENABLE_IMU_DEBUG
+            int64_t now = esp_timer_get_time();
+            if (now - t_start >= 1000000) {
             float dt = (now - t_start) / 1e6f;
             printf(
                 "INT %.1f Hz | pkt %.1f Hz | "
@@ -222,6 +223,7 @@ static void mpu_task(void *arg)
             pkt_count = 0;
             t_start = now;
         }
+        #endif
     }
 }
 

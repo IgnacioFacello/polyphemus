@@ -40,4 +40,10 @@ menu "Project Configuration"
         help
             Sample rate de la mpu.
 
+    config ENABLE_IMU_DEBUG
+        int "MPU6050 Debug toggle"
+        default 0
+        help
+            Toggles debug serial message.
+
 endmenu
