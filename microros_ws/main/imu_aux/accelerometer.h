@@ -32,9 +32,5 @@ typedef struct
  * out              : estructura con los resultados
  */
 void accelerometer_process(
-    float ax_g,
-    float ay_g,
-    float az_g,
     accelerometer_output_t *out
 );
-

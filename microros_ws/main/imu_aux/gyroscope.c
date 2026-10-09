@@ -7,9 +7,6 @@
 
 
 void gyroscope_process(
-    float gx_dps,
-    float gy_dps,
-    float gz_dps,
     float dt_s,
     gyroscope_output_t *out)
 {
@@ -18,17 +15,10 @@ void gyroscope_process(
         return;
     }
 
-
-    // Guardar velocidades recibidas [deg/s]
-    out->gx_dps = gx_dps;
-    out->gy_dps = gy_dps;
-    out->gz_dps = gz_dps;
-
-
     // deg/s -> rad/s
-    out->gx_rad_s = gx_dps * DEG_TO_RAD;
-    out->gy_rad_s = gy_dps * DEG_TO_RAD;
-    out->gz_rad_s = gz_dps * DEG_TO_RAD;
+    out->gx_rad_s = out->gx_dps * DEG_TO_RAD;
+    out->gy_rad_s = out->gy_dps * DEG_TO_RAD;
+    out->gz_rad_s = out->gz_dps * DEG_TO_RAD;
 
 
     // Pequeña rotación ocurrida entre muestras

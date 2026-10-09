@@ -28,9 +28,6 @@ typedef struct
  * out                    : estructura con los resultados
  */
 void gyroscope_process(
-    float gx_dps,
-    float gy_dps,
-    float gz_dps,
     float dt_s,
     gyroscope_output_t *out
 );
