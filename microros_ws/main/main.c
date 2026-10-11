@@ -55,6 +55,8 @@
 #define MICRO_ROS_APP_TASK_PRIO 5
 #define TIMER_PERIOD_MS 100
 
+#define GRAVITY_MS2 9.80665f
+
 #ifndef MICROROS_NAMESPACE
 #define MICROROS_NAMESPACE ""
 #endif
@@ -71,6 +73,8 @@ static rcl_publisher_t imu_diy_publisher;
 static sensor_msgs__msg__Imu imu_diy_msg;
 static rcl_publisher_t imu_dmp_publisher;
 static sensor_msgs__msg__Imu imu_dmp_msg;
+static rcl_publisher_t imu_gyro_publisher;
+static sensor_msgs__msg__Imu imu_gyro_msg;
 
 static TaskHandle_t s_mpu_task = NULL;
 
@@ -109,15 +113,15 @@ static esp_err_t mpu_init(void)
 }
 
 void msg_load_gyro(sensor_msgs__msg__Imu * msg, gyroscope_output_t * gyro){
-    msg->angular_velocity.x = gyro->delta_x_rad;
-    msg->angular_velocity.y = gyro->delta_y_rad;
-    msg->angular_velocity.z = gyro->delta_z_rad;
+    msg->angular_velocity.x = gyro->gx_rad_s;
+    msg->angular_velocity.y = gyro->gy_rad_s;
+    msg->angular_velocity.z = gyro->gz_rad_s;
 }
 
 void msg_load_accel(sensor_msgs__msg__Imu * msg, accelerometer_output_t * accel){
-    msg->linear_acceleration.x = accel->ax_g * accel->magnitude_g;
-    msg->linear_acceleration.y = accel->ay_g * accel->magnitude_g;
-    msg->linear_acceleration.z = accel->az_g * accel->magnitude_g;
+    msg->linear_acceleration.x = accel->ax_g * GRAVITY_MS2;
+    msg->linear_acceleration.y = accel->ay_g * GRAVITY_MS2;
+    msg->linear_acceleration.z = accel->az_g * GRAVITY_MS2;
 }
 
 void msg_load_orientation(sensor_msgs__msg__Imu * msg, quaternion_t * q){
@@ -132,16 +136,18 @@ static void mpu_task(void *arg)
     uint8_t pkt[DMP_PACKET_SIZE];
     uint16_t count = 0;
     uint32_t irq_count = 0, pkt_count = 0;
-    int64_t t_start = esp_timer_get_time();
-
-    float qw = 1, qx = 0, qy = 0, qz = 0;
-    float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
+    #if CONFIG_ENABLE_IMU_DEBUG
+        int64_t t_start = esp_timer_get_time();
+    #endif
 
     accelerometer_output_t accel;
     gyroscope_output_t gyro;
+
     quaternion_t orientation;
+    quaternion_t orientation_gyro;
 
     quaternion_identity(&orientation);
+    quaternion_identity(&orientation_gyro);
     const float dt_s = 0.005f;
 
     while (1) {
@@ -194,10 +200,20 @@ static void mpu_task(void *arg)
                         &gyro
                     );
 
+                    quaternion_update_gyro(
+                        &orientation_gyro,
+                        gyro.gx_rad_s,
+                        gyro.gy_rad_s,
+                        gyro.gz_rad_s,
+                        dt_s
+                    );
+
                     msg_load_gyro(&imu_dmp_msg, &gyro);
                     msg_load_gyro(&imu_diy_msg, &gyro);
+                    msg_load_gyro(&imu_gyro_msg, &gyro);
                     msg_load_accel(&imu_dmp_msg, &accel);
                     msg_load_accel(&imu_diy_msg, &accel);
+                    msg_load_accel(&imu_gyro_msg, &accel);
 
                     complementary_filter_update(
                         &orientation,
@@ -208,47 +224,64 @@ static void mpu_task(void *arg)
                     );
 
                     msg_load_orientation(&imu_diy_msg, &orientation);
+                    msg_load_orientation(&imu_gyro_msg, &orientation_gyro);
 
                     RCSOFTCHECK(rcl_publish(&imu_dmp_publisher, &imu_dmp_msg, NULL);)
+                    RCSOFTCHECK(rcl_publish(&imu_gyro_publisher, &imu_gyro_msg, NULL);)
                     RCSOFTCHECK(rcl_publish(&imu_diy_publisher, &imu_diy_msg, NULL);)
 
                 }
             }
         }
 
-        #if CONFIG_ENABLE_IMU_DEBUG
-            int64_t now = esp_timer_get_time();
-            if (now - t_start >= 1000000) {
-            float dt = (now - t_start) / 1e6f;
-            printf(
-                "INT %.1f Hz | pkt %.1f Hz | "
-                "DMP[wxyz] %.3f %.3f %.3f %.3f | "
-                "CALC[wxyz] %.3f %.3f %.3f %.3f | "
-                "Acc[g] %.3f %.3f %.3f | "
-                "Gyro[dps] %.2f %.2f %.2f\n",
+     #if CONFIG_ENABLE_IMU_DEBUG
 
-                irq_count / dt,
-                pkt_count / dt,
+    int64_t now = esp_timer_get_time();
 
-                qw, qx, qy, qz,
+    if (now - t_start >= 1000000)
+    {
+        float dt = (now - t_start) / 1e6f;
 
-                orientation.w,
-                orientation.x,
-                orientation.y,
-                orientation.z,
+        printf(
+            "INT %.1f Hz | pkt %.1f Hz | "
+            "DMP[wxyz] %.3f %.3f %.3f %.3f | "
+            "GYRO[wxyz] %.3f %.3f %.3f %.3f | "
+            "FILTER[wxyz] %.3f %.3f %.3f %.3f\n",
 
-                ax, ay, az,
-                gx, gy, gz
+            irq_count / dt,
+            pkt_count / dt,
+
+            imu_dmp_msg.orientation.w,
+            imu_dmp_msg.orientation.x,
+            imu_dmp_msg.orientation.y,
+            imu_dmp_msg.orientation.z,
+
+            orientation_gyro.w,
+            orientation_gyro.x,
+            orientation_gyro.y,
+            orientation_gyro.z,
+
+            orientation.w,
+            orientation.x,
+            orientation.y,
+            orientation.z
+        );
+
+        if (irq_count == 0)
+        {
+            ESP_LOGW(
+                TAG,
+                "No MPU interrupts received - check INT wiring (GPIO%d)",
+                CONFIG_INT_PIN
             );
-            
-            if (irq_count == 0) {
-                ESP_LOGW(TAG, "No MPU interrupts received - check INT wiring (GPIO%d)", CONFIG_INT_PIN);
-            }
-            irq_count = 0;
-            pkt_count = 0;
-            t_start = now;
         }
-        #endif
+
+        irq_count = 0;
+        pkt_count = 0;
+        t_start = now;
+    }
+
+#endif
     }
 }
 
@@ -306,7 +339,6 @@ void micro_ros_task(void *arg)
         CONFIG_MICRO_ROS_AGENT_PORT);
 
 #endif
-
     while (retry_count < MAX_RETRIES)
     {
         ESP_LOGI(
@@ -378,6 +410,17 @@ void micro_ros_task(void *arg)
             Imu
         ),
         "imu_dmp"
+    );)
+
+    RCCHECK(rclc_publisher_init_best_effort(
+        &imu_gyro_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(
+            sensor_msgs,
+            msg,
+            Imu
+        ),
+        "imu_gyro"
     );)
 
     rclc_executor_t executor =
