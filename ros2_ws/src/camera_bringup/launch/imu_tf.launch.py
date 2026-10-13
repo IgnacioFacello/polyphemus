@@ -24,7 +24,7 @@ BLUE_URDF = """
 <robot name="imu_box">
   <link name="imu_dmp_link">
     <visual>
-      <geometry><box size="0.20 0.10 0.02"/></geometry>
+      <geometry><box size="0.10 0.20 0.02"/></geometry>
       <material name="blue"><color rgba="0.1 0.3 0.9 1.0"/></material>
     </visual>
   </link>
@@ -35,8 +35,19 @@ RED_URDF = """
 <robot name="imu_box">
   <link name="imu_diy_link">
     <visual>
-      <geometry><box size="0.20 0.10 0.02"/></geometry>
+      <geometry><box size="0.10 0.20 0.02"/></geometry>
       <material name="red"><color rgba="0.9 0.3 0.1 1.0"/></material>
+    </visual>
+  </link>
+</robot>
+"""
+
+GREEN_URDF = """
+<robot name="imu_box">
+  <link name="imu_gyro_link">
+    <visual>
+      <geometry><box size="0.10 0.20 0.02"/></geometry>
+      <material name="red"><color rgba="0.1 0.9 0.3 1.0"/></material>
     </visual>
   </link>
 </robot>
@@ -55,7 +66,7 @@ def generate_launch_description():
             package='poseToTransform',
             executable='imuToTransform_node',
             parameters=[{
-                'imu_topic': "imu_dmp",
+                'input_topic': "imu_dmp",
                 'child_frame': "imu_dmp_link",
                 'integrate': integrate,
             }]
@@ -65,8 +76,18 @@ def generate_launch_description():
             package='poseToTransform',
             executable='imuToTransform_node',
             parameters=[{
-                'imu_topic': "imu_diy",
+                'input_topic': "imu_diy",
                 'child_frame': "imu_diy_link",
+                'integrate': integrate,
+            }]
+        ),
+
+        Node(
+            package='poseToTransform',
+            executable='imuToTransform_node',
+            parameters=[{
+                'input_topic': "imu_gyro",
+                'child_frame': "imu_gyro_link",
                 'integrate': integrate,
             }]
         ),
@@ -80,6 +101,17 @@ def generate_launch_description():
             }],
             remappings=[(
                 'robot_description', 'robot_description_dmp'
+        )]),
+
+        Node(
+            package='robot_state_publisher',
+            executable='robot_state_publisher',
+            parameters=[{
+                'robot_description': GREEN_URDF,
+                'frame_prefix': "gyro"
+            }],
+            remappings=[(
+                'robot_description', 'robot_description_gyro'
         )]),
 
         Node(
