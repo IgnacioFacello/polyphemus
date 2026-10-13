@@ -39,7 +39,7 @@ def rotate(q, v):
 class ImuTfBroadcaster(Node):
     def __init__(self):
         super().__init__('imu_tf_broadcaster')
-        self.declare_parameter('input_topic', '/imu_dmp')
+        self.declare_parameter('input_topic', '/imu')
         self.declare_parameter('parent_frame', 'odom')
         self.declare_parameter('child_frame', 'imu_link')
         self.declare_parameter('restamp', True)  # use PC clock instead of MCU stamp
