@@ -5,7 +5,7 @@
 #include "quaternion.h"
 
 
-#define COMPLEMENTARY_FILTER_DEFAULT_ALPHA 0.98f
+#define COMPLEMENTARY_FILTER_DEFAULT_ALPHA CONFIG_COMP_ALPHA / 100 //0.5f
 
 
 /**

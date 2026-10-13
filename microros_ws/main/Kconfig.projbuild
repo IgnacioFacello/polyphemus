@@ -46,4 +46,16 @@ menu "Project Configuration"
         help
             Toggles debug serial message.
 
+    config ENABLE_DMP_PUB
+        int "dmp publisher toggle"
+        default 0
+
+    config ENABLE_GYRO_PUB
+        int "gyro publisher toggle"
+        default 0
+
+    config COMP_ALPHA
+        int "Complemetary filter alpha"
+        default 50
+
 endmenu
