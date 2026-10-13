@@ -152,7 +152,7 @@ static void mpu_task(void *arg)
 
     quaternion_identity(&orientation);
     quaternion_identity(&orientation_gyro);
-    const float dt_s = 0.005f;
+    const float dt_s = CONFIG_SAMPLE_RATE > 0 ? 1.0f / CONFIG_SAMPLE_RATE : 0.01f;
 
     while (1) {
         /* Espera la interrupcion del DMP (el timeout permite detectar INT muerta) */
