@@ -71,10 +71,14 @@ static i2c_master_dev_handle_t dev_handle;
 
 static rcl_publisher_t imu_diy_publisher;
 static sensor_msgs__msg__Imu imu_diy_msg;
+#if CONFIG_ENABLE_DMP_PUB
 static rcl_publisher_t imu_dmp_publisher;
 static sensor_msgs__msg__Imu imu_dmp_msg;
+#endif
+#if CONFIG_ENABLE_GYRO_PUB
 static rcl_publisher_t imu_gyro_publisher;
 static sensor_msgs__msg__Imu imu_gyro_msg;
+#endif
 
 static TaskHandle_t s_mpu_task = NULL;
 
@@ -178,10 +182,12 @@ static void mpu_task(void *arg)
                         q[i] = (int32_t)(((uint32_t)pkt[4*i]   << 24) | ((uint32_t)pkt[4*i+1] << 16) |
                                          ((uint32_t)pkt[4*i+2] <<  8) |  (uint32_t)pkt[4*i+3]);
                     }
+                    #if CONFIG_ENABLE_DMP_PUB
                     imu_dmp_msg.orientation.w = q[0] / Q30;
                     imu_dmp_msg.orientation.x = q[1] / Q30;
                     imu_dmp_msg.orientation.y = q[2] / Q30;
                     imu_dmp_msg.orientation.z = q[3] / Q30;
+                    #endif
 
                     /* Crudo de la MISMA muestra: gyro en 16/20/24, accel en 28/32/36 */
                     gyro.gx_dps = (int16_t)((pkt[16] << 8) | pkt[17]) / GYRO_LSB_PER_DPS_DMP;
@@ -208,12 +214,16 @@ static void mpu_task(void *arg)
                         dt_s
                     );
 
+                    #if CONFIG_ENABLE_DMP_PUB
                     msg_load_gyro(&imu_dmp_msg, &gyro);
-                    msg_load_gyro(&imu_diy_msg, &gyro);
-                    msg_load_gyro(&imu_gyro_msg, &gyro);
                     msg_load_accel(&imu_dmp_msg, &accel);
-                    msg_load_accel(&imu_diy_msg, &accel);
+                    #endif
+                    #if CONFIG_ENABLE_GYRO_PUB
+                    msg_load_gyro(&imu_gyro_msg, &gyro);
                     msg_load_accel(&imu_gyro_msg, &accel);
+                    #endif
+                    msg_load_gyro(&imu_diy_msg, &gyro);
+                    msg_load_accel(&imu_diy_msg, &accel);
 
                     complementary_filter_update(
                         &orientation,
@@ -224,10 +234,15 @@ static void mpu_task(void *arg)
                     );
 
                     msg_load_orientation(&imu_diy_msg, &orientation);
+                    #if CONFIG_ENABLE_GYRO_PUB
                     msg_load_orientation(&imu_gyro_msg, &orientation_gyro);
-
+                    #endif
+                    #if CONFIG_ENABLE_DMP_PUB
                     RCSOFTCHECK(rcl_publish(&imu_dmp_publisher, &imu_dmp_msg, NULL);)
+                    #endif
+                    #if CONFIG_ENABLE_GYRO_PUB
                     RCSOFTCHECK(rcl_publish(&imu_gyro_publisher, &imu_gyro_msg, NULL);)
+                    #endif
                     RCSOFTCHECK(rcl_publish(&imu_diy_publisher, &imu_diy_msg, NULL);)
 
                 }
@@ -401,6 +416,7 @@ void micro_ros_task(void *arg)
         "imu_diy"
     );)
 
+    #if CONFIG_ENABLE_DMP_PUB
     RCCHECK(rclc_publisher_init_best_effort(
         &imu_dmp_publisher,
         &node,
@@ -411,7 +427,9 @@ void micro_ros_task(void *arg)
         ),
         "imu_dmp"
     );)
+    #endif
 
+    #if CONFIG_ENABLE_GYRO_PUB
     RCCHECK(rclc_publisher_init_best_effort(
         &imu_gyro_publisher,
         &node,
@@ -422,6 +440,7 @@ void micro_ros_task(void *arg)
         ),
         "imu_gyro"
     );)
+    #endif
 
     rclc_executor_t executor =
         rclc_executor_get_zero_initialized_executor();
