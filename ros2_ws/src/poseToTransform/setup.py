@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'imuToTransform_node = poseToTransform.imuToTransform:main',
             'poseToTransform_node = poseToTransform.poseToTransform:main',
+            'imuErrorAnalysis_node = poseToTransform.imuErrorAnalysis:main',
         ],
     },
 )
