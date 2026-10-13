@@ -16,9 +16,9 @@ void gyroscope_process(
     }
 
     // deg/s -> rad/s
-    out->gx_rad_s = out->gx_dps * DEG_TO_RAD;
-    out->gy_rad_s = out->gy_dps * DEG_TO_RAD;
-    out->gz_rad_s = out->gz_dps * DEG_TO_RAD;
+    out->gx_rad_s = out->gx_dps;// * DEG_TO_RAD;
+    out->gy_rad_s = out->gy_dps;// * DEG_TO_RAD;
+    out->gz_rad_s = out->gz_dps;// * DEG_TO_RAD;
 
 
     // Pequeña rotación ocurrida entre muestras
