@@ -136,7 +136,10 @@ void msg_load_orientation(sensor_msgs__msg__Imu * msg, quaternion_t * q){
 }
 
 int16_t pkt_to_data16(uint8_t *pkt, int offset) {
-    return (int16_t)((pkt[offset] << 8) | (int16_t)(pkt[offset + 1] & 0xFF));
+    int16_t higher = (int16_t)(pkt[offset]    );
+    int16_t lower =  (int16_t)(pkt[offset + 1]);
+    return (higher << 8) | lower;
+
 }
 
 static void mpu_task(void *arg)
@@ -194,9 +197,9 @@ static void mpu_task(void *arg)
                     #endif
 
                     /* Crudo de la MISMA muestra: gyro en 16/20/24, accel en 28/32/36 */
-                    gyro.gx_dps = (-1) * pkt_to_data16(pkt,16) / GYRO_LSB_PER_DPS_DMP;
-                    gyro.gy_dps = (-1) * pkt_to_data16(pkt,20) / GYRO_LSB_PER_DPS_DMP;
-                    gyro.gz_dps = (-1) * pkt_to_data16(pkt,24) / GYRO_LSB_PER_DPS_DMP;
+                    gyro.gx_dps = (-1) * pkt_to_data16(pkt,16) / (GYRO_LSB_PER_DPS_DMP * 2);
+                    gyro.gy_dps = (-1) * pkt_to_data16(pkt,20) / (GYRO_LSB_PER_DPS_DMP * 2);
+                    gyro.gz_dps = (-1) * pkt_to_data16(pkt,24) / (GYRO_LSB_PER_DPS_DMP * 2);
                     accel.ax_g  = (-1) * pkt_to_data16(pkt,28) / ACCEL_LSB_PER_G_DMP;
                     accel.ay_g  = (-1) * pkt_to_data16(pkt,32) / ACCEL_LSB_PER_G_DMP;
                     accel.az_g  = (-1) * pkt_to_data16(pkt,36) / ACCEL_LSB_PER_G_DMP;
