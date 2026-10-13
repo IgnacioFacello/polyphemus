@@ -5,3 +5,5 @@ sdkconfig*
 dependencies.lock
 .cache
 components
+.venv/
+ignore/
