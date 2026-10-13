@@ -135,6 +135,10 @@ void msg_load_orientation(sensor_msgs__msg__Imu * msg, quaternion_t * q){
     msg->orientation.z = q->z;
 }
 
+int16_t pkt_to_data16(uint8_t *pkt, int offset) {
+    return (int16_t)((pkt[offset] << 8) | (int16_t)(pkt[offset + 1] & 0xFF));
+}
+
 static void mpu_task(void *arg)
 {
     uint8_t pkt[DMP_PACKET_SIZE];
@@ -190,12 +194,12 @@ static void mpu_task(void *arg)
                     #endif
 
                     /* Crudo de la MISMA muestra: gyro en 16/20/24, accel en 28/32/36 */
-                    gyro.gx_dps = (-1) * (int16_t)((pkt[16] << 8) | pkt[17]) / GYRO_LSB_PER_DPS_DMP;
-                    gyro.gy_dps = (-1) * (int16_t)((pkt[20] << 8) | pkt[21]) / GYRO_LSB_PER_DPS_DMP;
-                    gyro.gz_dps = (-1) * (int16_t)((pkt[24] << 8) | pkt[25]) / GYRO_LSB_PER_DPS_DMP;
-                    accel.ax_g = (-1) * (int16_t)((pkt[28] << 8) | pkt[29]) / ACCEL_LSB_PER_G_DMP;
-                    accel.ay_g = (-1) * (int16_t)((pkt[32] << 8) | pkt[33]) / ACCEL_LSB_PER_G_DMP;
-                    accel.az_g = (-1) * (int16_t)((pkt[36] << 8) | pkt[37]) / ACCEL_LSB_PER_G_DMP;
+                    gyro.gx_dps = (-1) * pkt_to_data16(pkt,16) / GYRO_LSB_PER_DPS_DMP;
+                    gyro.gy_dps = (-1) * pkt_to_data16(pkt,20) / GYRO_LSB_PER_DPS_DMP;
+                    gyro.gz_dps = (-1) * pkt_to_data16(pkt,24) / GYRO_LSB_PER_DPS_DMP;
+                    accel.ax_g  = (-1) * pkt_to_data16(pkt,28) / ACCEL_LSB_PER_G_DMP;
+                    accel.ay_g  = (-1) * pkt_to_data16(pkt,32) / ACCEL_LSB_PER_G_DMP;
+                    accel.az_g  = (-1) * pkt_to_data16(pkt,36) / ACCEL_LSB_PER_G_DMP;
 
                     accelerometer_process(
                         &accel
