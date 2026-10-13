@@ -190,12 +190,12 @@ static void mpu_task(void *arg)
                     #endif
 
                     /* Crudo de la MISMA muestra: gyro en 16/20/24, accel en 28/32/36 */
-                    gyro.gx_dps = (int16_t)((pkt[16] << 8) | pkt[17]) / GYRO_LSB_PER_DPS_DMP;
-                    gyro.gy_dps = (int16_t)((pkt[20] << 8) | pkt[21]) / GYRO_LSB_PER_DPS_DMP;
-                    gyro.gz_dps = (int16_t)((pkt[24] << 8) | pkt[25]) / GYRO_LSB_PER_DPS_DMP;
-                    accel.ax_g = (int16_t)((pkt[28] << 8) | pkt[29]) / ACCEL_LSB_PER_G_DMP;
-                    accel.ay_g = (int16_t)((pkt[32] << 8) | pkt[33]) / ACCEL_LSB_PER_G_DMP;
-                    accel.az_g = (int16_t)((pkt[36] << 8) | pkt[37]) / ACCEL_LSB_PER_G_DMP;
+                    gyro.gx_dps = (-1) * (int16_t)((pkt[16] << 8) | pkt[17]) / GYRO_LSB_PER_DPS_DMP;
+                    gyro.gy_dps = (-1) * (int16_t)((pkt[20] << 8) | pkt[21]) / GYRO_LSB_PER_DPS_DMP;
+                    gyro.gz_dps = (-1) * (int16_t)((pkt[24] << 8) | pkt[25]) / GYRO_LSB_PER_DPS_DMP;
+                    accel.ax_g = (-1) * (int16_t)((pkt[28] << 8) | pkt[29]) / ACCEL_LSB_PER_G_DMP;
+                    accel.ay_g = (-1) * (int16_t)((pkt[32] << 8) | pkt[33]) / ACCEL_LSB_PER_G_DMP;
+                    accel.az_g = (-1) * (int16_t)((pkt[36] << 8) | pkt[37]) / ACCEL_LSB_PER_G_DMP;
 
                     accelerometer_process(
                         &accel
