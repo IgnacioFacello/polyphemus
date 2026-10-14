@@ -1,25 +1,34 @@
 # polyphemus
 ## Integrantes
-Ignacio Facello
-Lucia Lazlo
-Micaela Grande
-Natasha ???
+- Ignacio Facello
+- Lucia Lazlo
+- Micaela Grande
+- Natasha Vodanovich
 
 ## How To Run
 1. Lanzar el agente de micro-ros 
-2. Lanzar el nodo graficador
+
+2. Descargar el componente de microros en microros_ws/components o en ${HOME}/esp_components
+
+3. Configurar las variables en `idf.py menuconfig` > Project Configuration > {dmp_publisher_toggle, gyro_publisher_toggle, complementary_filter_alpha} 
+
+4. Buildear el cliente de microros con el namespace correcto
 ```bash
-ros2 launch bot_bringup bot_app.launch.xml
+MICROROS_NAMESPACE="polyphemus" idf.py build flash
 ```
 
-3. Descargar el componente de microros en microros_ws/components o en ${HOME}/esp_componetns
+### visualizacion
 
-3. Buildear el cliente de microros con el namespace correcto
+rviz
 ```bash
-MICROROS_NAMESPACE="ifacello" idf.py build 
+ros2 launch camera_bringup imu_tf.launch.py
 ```
 
-4. Flashear el microcontrolador
+Luego agregar los modelos de robot de interes (diy, gyro, dmp)
+
+error
 ```bash
-idf.py flash
+ros2 launch camera_bringup plot.launch.py layout:=[dmp,gyro]
 ```
+
+genera los graficos para comparar el error entre las implementaciones
