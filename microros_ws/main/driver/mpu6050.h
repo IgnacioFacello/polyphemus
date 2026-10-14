@@ -22,7 +22,7 @@
 
 #define MPU6050_USER_CTRL     0x6A
 #define DMP_PACKET_SIZE       42
-#define GYRO_LSB_PER_DPS_DMP  16.4f * 2          /* ±2000 °/s */
+#define GYRO_LSB_PER_DPS_DMP  16.4f              /* ±2000 °/s */
 #define ACCEL_LSB_PER_G_DMP   8192.0f            /* ±2 g */
 #define Q30                   1073741824.0f      /* 2^30 */
 
