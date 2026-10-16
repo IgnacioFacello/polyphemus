@@ -22,9 +22,16 @@
 
 #define MPU6050_USER_CTRL     0x6A
 #define DMP_PACKET_SIZE       42
-#define GYRO_LSB_PER_DPS_DMP  16.4f * 2          /* ±2000 °/s */
+/* Escala del gyro en el paquete DMP. No esta documentada: se midio comparando
+ * el gyro del paquete con los registros 0x43-0x48 (16.4 LSB/°/s a ±2000 °/s)
+ * en los tres ejes: paquete = registro * 0.0439  ->  16.4 * 0.0439 = 0.72 */
+#define GYRO_LSB_PER_DPS_DMP  (0.72f)
 #define ACCEL_LSB_PER_G_DMP   8192.0f            /* ±2 g */
 #define Q30                   1073741824.0f      /* 2^30 */
+
+#define MPU6050_GYRO_XOUT_H   0x43
+#define MPU6050_XG_OFFS_USRH  0x13   /* offsets del gyro: X 0x13-14, Y 0x15-16, Z 0x17-18 */
+#define GYRO_CAL_SAMPLES      200    /* 200 muestras a 200 Hz = 1 s por medicion */
 
 typedef struct {
 	float ax, ay, az;
@@ -44,6 +51,11 @@ esp_err_t mpu6050_register_write_byte(i2c_master_dev_handle_t dev_handle, uint8_
 void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle);
 
 esp_err_t mpu6050_dmp_prepare(i2c_master_dev_handle_t dev_handle);
+/**
+ * @brief Mide el bias del gyro (sensor quieto) y lo carga en los registros de
+ * offset 0x13-0x18, asi el sensor (y el DMP) lo restan solos. Tarda ~3 s.
+ */
+esp_err_t mpu6050_calibrate_gyro(i2c_master_dev_handle_t dev_handle);
 esp_err_t mpu6050_dmp_start(i2c_master_dev_handle_t dev_handle);
 esp_err_t mpu6050_dmp_read_fifo_count(i2c_master_dev_handle_t dev_handle, uint16_t *count);
 esp_err_t mpu6050_dmp_read_fifo_packet(i2c_master_dev_handle_t dev_handle, uint8_t packet[DMP_PACKET_SIZE]);

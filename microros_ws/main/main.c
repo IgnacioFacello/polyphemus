@@ -71,9 +71,10 @@ static i2c_master_dev_handle_t dev_handle;
 
 static rcl_publisher_t imu_diy_publisher;
 static sensor_msgs__msg__Imu imu_diy_msg;
+/* Se declara siempre: el printf de debug lo usa aunque no se publique */
+static sensor_msgs__msg__Imu imu_dmp_msg;
 #if CONFIG_ENABLE_DMP_PUB
 static rcl_publisher_t imu_dmp_publisher;
-static sensor_msgs__msg__Imu imu_dmp_msg;
 #endif
 #if CONFIG_ENABLE_GYRO_PUB
 static rcl_publisher_t imu_gyro_publisher;
@@ -101,6 +102,10 @@ static esp_err_t mpu_init(void)
     ESP_LOGI(TAG, "MPU WHO_AM_I = 0x%02X", who);
 
     ESP_RETURN_ON_ERROR(mpu6050_dmp_prepare(dev_handle), TAG, "DMP init");
+
+    /* Con el DMP todavia apagado: medir el bias del gyro y cargarlo en los
+     * registros de offset. El sensor tiene que estar QUIETO al arrancar. */
+    ESP_RETURN_ON_ERROR(mpu6050_calibrate_gyro(dev_handle), TAG, "gyro calibration");
 
     /* Configurar GPIO e ISR antes de habilitar las interrupciones del MPU. */
     gpio_config_t io = {
@@ -189,18 +194,21 @@ static void mpu_task(void *arg)
                         q[i] = (int32_t)(((uint32_t)pkt[4*i]   << 24) | ((uint32_t)pkt[4*i+1] << 16) |
                                          ((uint32_t)pkt[4*i+2] <<  8) |  (uint32_t)pkt[4*i+3]);
                     }
+                    /* El sensor esta montado girado 180° en X: se corrige con
+                     * q_cuerpo = q_dmp ⊗ (0, 1, 0, 0) = (-x, w, z, -y) */
                     #if CONFIG_ENABLE_DMP_PUB
-                    imu_dmp_msg.orientation.w = q[0] / Q30;
-                    imu_dmp_msg.orientation.x = q[1] / Q30;
-                    imu_dmp_msg.orientation.y = q[2] / Q30;
-                    imu_dmp_msg.orientation.z = q[3] / Q30;
+                    imu_dmp_msg.orientation.w = -q[1] / Q30;
+                    imu_dmp_msg.orientation.x =  q[0] / Q30;
+                    imu_dmp_msg.orientation.y =  q[3] / Q30;
+                    imu_dmp_msg.orientation.z = -q[2] / Q30;
                     #endif
 
-                    /* Crudo de la MISMA muestra: gyro en 16/20/24, accel en 28/32/36 */
-                    gyro.gx_dps = (-1) * pkt_to_data16(pkt,16) / GYRO_LSB_PER_DPS_DMP;
+                    /* Crudo de la MISMA muestra: gyro en 16/20/24, accel en 28/32/36.
+                     * Montaje girado 180° en X: (x, y, z) -> (x, -y, -z) */
+                    gyro.gx_dps =        pkt_to_data16(pkt,16) / GYRO_LSB_PER_DPS_DMP;
                     gyro.gy_dps = (-1) * pkt_to_data16(pkt,20) / GYRO_LSB_PER_DPS_DMP;
                     gyro.gz_dps = (-1) * pkt_to_data16(pkt,24) / GYRO_LSB_PER_DPS_DMP;
-                    accel.ax_g  = (-1) * pkt_to_data16(pkt,28) / ACCEL_LSB_PER_G_DMP;
+                    accel.ax_g  =        pkt_to_data16(pkt,28) / ACCEL_LSB_PER_G_DMP;
                     accel.ay_g  = (-1) * pkt_to_data16(pkt,32) / ACCEL_LSB_PER_G_DMP;
                     accel.az_g  = (-1) * pkt_to_data16(pkt,36) / ACCEL_LSB_PER_G_DMP;
 

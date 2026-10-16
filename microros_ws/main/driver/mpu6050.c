@@ -5,6 +5,8 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include <string.h>
+#include <math.h>
+#include "esp_rom_sys.h"
 #include "driver/i2c_master.h"
 #include "driver/mpu6050.h"
 #include "dmp_firmware.h"
@@ -157,6 +159,75 @@ esp_err_t mpu6050_dmp_prepare(i2c_master_dev_handle_t dev_handle)
     ESP_RETURN_ON_ERROR(mpu_dmp_init(dev_handle), TAG, "DMP init");
     ESP_RETURN_ON_ERROR(mpu_write_reg(dev_handle, MPU6050_INT_PIN_CFG, 0x10), TAG, "INT_PIN_CFG");
     ESP_LOGI(TAG, "DMP loaded");
+    return ESP_OK;
+}
+
+/* Promedio del gyro (registros 0x43-0x48) con el sensor quieto */
+static esp_err_t gyro_mean(i2c_master_dev_handle_t dev_handle, float mean[3])
+{
+    uint8_t buf[6];
+    float sum[3] = {0};
+
+    for (int n = 0; n < GYRO_CAL_SAMPLES; n++) {
+        ESP_RETURN_ON_ERROR(mpu_read_reg(dev_handle, MPU6050_GYRO_XOUT_H, buf, sizeof(buf)), TAG, "gyro read");
+        for (int i = 0; i < 3; i++) {
+            sum[i] += (int16_t)((buf[2 * i] << 8) | buf[2 * i + 1]);
+        }
+        esp_rom_delay_us(5000);   /* una muestra nueva cada 5 ms (200 Hz); vTaskDelay(5 ms) = 0 ticks a 100 Hz */
+    }
+    for (int i = 0; i < 3; i++) {
+        mean[i] = sum[i] / GYRO_CAL_SAMPLES;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t gyro_write_offsets(i2c_master_dev_handle_t dev_handle, const int16_t off[3])
+{
+    for (int i = 0; i < 3; i++) {
+        ESP_RETURN_ON_ERROR(mpu_write_reg(dev_handle, MPU6050_XG_OFFS_USRH + 2 * i, (uint8_t)(off[i] >> 8)), TAG, "offs H");
+        ESP_RETURN_ON_ERROR(mpu_write_reg(dev_handle, MPU6050_XG_OFFS_USRH + 2 * i + 1, (uint8_t)(off[i] & 0xFF)), TAG, "offs L");
+    }
+    return ESP_OK;
+}
+
+esp_err_t mpu6050_calibrate_gyro(i2c_master_dev_handle_t dev_handle)
+{
+    ESP_RETURN_ON_FALSE(dev_handle != NULL, ESP_ERR_INVALID_ARG, TAG, "invalid device handle");
+
+    float mean0[3], mean1[3], mean2[3];
+    int16_t off0[3] = {0, 0, 0};
+    int16_t off1[3], off2[3];
+
+    ESP_LOGI(TAG, "Calibrando gyro: dejar el sensor QUIETO...");
+    ESP_RETURN_ON_ERROR(gyro_write_offsets(dev_handle, off0), TAG, "offsets reset");
+    vTaskDelay(pdMS_TO_TICKS(20));
+    ESP_RETURN_ON_ERROR(gyro_mean(dev_handle, mean0), TAG, "mean0");
+
+    /* 1er paso: el offset del registro pesa ~1/2 LSB de salida a ±2000 °/s */
+    for (int i = 0; i < 3; i++) {
+        off1[i] = (int16_t)lroundf(-2.0f * mean0[i]);
+    }
+    ESP_RETURN_ON_ERROR(gyro_write_offsets(dev_handle, off1), TAG, "offsets 1");
+    vTaskDelay(pdMS_TO_TICKS(20));
+    ESP_RETURN_ON_ERROR(gyro_mean(dev_handle, mean1), TAG, "mean1");
+
+    /* 2do paso: se mide la ganancia real del offset y se corrige lo que quedo */
+    for (int i = 0; i < 3; i++) {
+        float gain = 0.5f;
+        if (off1[i] != 0) {
+            float g = (mean1[i] - mean0[i]) / off1[i];
+            if (g > 0.1f && g < 4.0f) gain = g;
+        }
+        off2[i] = (int16_t)lroundf(off1[i] - mean1[i] / gain);
+    }
+    ESP_RETURN_ON_ERROR(gyro_write_offsets(dev_handle, off2), TAG, "offsets 2");
+    vTaskDelay(pdMS_TO_TICKS(20));
+    ESP_RETURN_ON_ERROR(gyro_mean(dev_handle, mean2), TAG, "mean2");
+
+    ESP_LOGI(TAG, "Bias gyro antes: %.1f %.1f %.1f °/s | despues: %.2f %.2f %.2f °/s | offsets %d %d %d",
+             mean0[0] / 16.4f, mean0[1] / 16.4f, mean0[2] / 16.4f,
+             mean2[0] / 16.4f, mean2[1] / 16.4f, mean2[2] / 16.4f,
+             off2[0], off2[1], off2[2]);
     return ESP_OK;
 }
 

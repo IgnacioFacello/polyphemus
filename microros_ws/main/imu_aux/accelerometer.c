@@ -50,7 +50,7 @@ void accelerometer_process(
 
     // Pitch
     out->pitch_rad =
-        -atan2f(
+        atan2f(
             -out->ax_g,
             sqrtf(
                 out->ay_g * out->ay_g +
