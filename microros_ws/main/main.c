@@ -8,6 +8,7 @@
 
 // Drivers (drivers/) y logica del robot (logica/)
 #include "red.h"
+#include "vl53l0x_drv.h"
 
 // Librerías base de micro-ROS
 #include <rcl/rcl.h>
@@ -22,6 +23,9 @@
 // Stack y prioridad de las tareas
 #define MICRO_ROS_TASK_STACK 16000
 #define MICRO_ROS_TASK_PRIO  5
+#define LASER_TASK_STACK     4096
+#define LASER_TASK_PRIO      4
+#define LASER_PERIODO_MS     100   // ~33 ms de medición + 100 ms de espera ≈ 7,5 veces por segundo
 
 #define ENTIDAD_TIMEOUT_MS 5000   // espera máxima del agente al crear cada entidad
 #define PING_PERIODO_MS 1000  // cada cuánto se chequea que el agente siga vivo
@@ -221,10 +225,39 @@ static void micro_ros_task(void * arg)
     }
 }
 
+// =========================================================
+// TAREA DEL LÁSER (VL53L0X)
+// =========================================================
+// Va en su propia tarea porque laser_medir() bloquea ~33 ms y frenaría el executor.
+static void laser_task(void * arg)
+{
+    while (1) {
+        uint16_t mm;
+        laser_estado_t e = laser_medir(&mm);
+        if (e == LASER_OK) {
+            ESP_LOGI(TAG, "Distancia: %u mm  (señal %.2f MCPS)", mm, laser_ultima_senal_mcps());
+        } else {
+            ESP_LOGW(TAG, "Medición %s (leído: %u mm)", laser_estado_str(e), mm);
+        }
+        vTaskDelay(pdMS_TO_TICKS(LASER_PERIODO_MS));
+    }
+}
+
 void app_main(void)
 {
     // INICIALIZACIONES START
+    // Prender el láser (una sola vez). Si falla, sigue andando micro-ROS sin láser.
+    bool laser_ok = (laser_init() == ESP_OK);
+    if (!laser_ok) {
+        ESP_LOGE(TAG, "No se pudo iniciar el láser");
+    }
+    // Opcional: más tiempo por medición = menos ruido (por defecto ~33 ms).
+    // 66 ms deja al láser a la misma tasa que el HC-SR04 (>60 ms entre mediciones).
+    // laser_set_budget_us(66000);
     // INICIALIZACIONES END
     ESP_ERROR_CHECK(red_wifi_init());
     xTaskCreate(micro_ros_task, "micro_ros_task", MICRO_ROS_TASK_STACK, NULL, MICRO_ROS_TASK_PRIO, NULL);
+    if (laser_ok) {
+        xTaskCreate(laser_task, "laser_task", LASER_TASK_STACK, NULL, LASER_TASK_PRIO, NULL);
+    }
 }
