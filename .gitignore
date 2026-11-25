@@ -5,3 +5,4 @@ sdkconfig*
 dependencies.lock
 .cache
 components
+ignore/
