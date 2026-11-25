@@ -1,0 +1,16 @@
+idf_component_register(SRCS
+    "encoder/as5600.c"
+    "potenciometro/potentiometer.c"
+    "imu/mpu6050.c"
+  INCLUDE_DIRS
+    "encoder"
+    "imu"
+    "potenciometro"
+  PRIV_REQUIRES
+    esp_driver_gpio
+  REQUIRES
+    esp_timer
+    esp_rom
+)
+
+target_link_libraries(${COMPONENT_LIB} PRIVATE m)

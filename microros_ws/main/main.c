@@ -1,350 +1,230 @@
-#include <string.h>
-#include <stdio.h>
-#include <unistd.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 #include <math.h>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_system.h"
-#include "esp_err.h"
-#include "sdkconfig.h"
 
-#include <uros_network_interfaces.h>
+// Drivers (drivers/) y logica del robot (logica/)
+#include "red.h"
+
+// Librerías base de micro-ROS
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
-#include <std_msgs/msg/float32_multi_array.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
-
-#ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
 #include <rmw_microros/rmw_microros.h>
-#endif
+#include <std_msgs/msg/string.h>
+#include <std_msgs/msg/bool.h>
+#include <std_msgs/msg/empty.h>
 
-#define RCCHECK(fn)                                                                      \
-    {                                                                                    \
-        rcl_ret_t temp_rc = fn;                                                          \
-        if ((temp_rc != RCL_RET_OK))                                                     \
-        {                                                                                \
-            printf("Failed status on line %d: %d. Aborting.\n", __LINE__, (int)temp_rc); \
-            vTaskDelete(NULL);                                                           \
-        }                                                                                \
-    }
-#define RCSOFTCHECK(fn)                                                                    \
-    {                                                                                      \
-        rcl_ret_t temp_rc = fn;                                                            \
-        if ((temp_rc != RCL_RET_OK))                                                       \
-        {                                                                                  \
-            printf("Failed status on line %d: %d. Continuing.\n", __LINE__, (int)temp_rc); \
-        }                                                                                  \
-    }
+// Stack y prioridad de las tareas
+#define MICRO_ROS_TASK_STACK 16000
+#define MICRO_ROS_TASK_PRIO  5
 
-#define MICRO_ROS_APP_STACK 16000
-#define MICRO_ROS_APP_TASK_PRIO 5
+#define ENTIDAD_TIMEOUT_MS 5000   // espera máxima del agente al crear cada entidad
+#define PING_PERIODO_MS 1000  // cada cuánto se chequea que el agente siga vivo
 
-#ifndef MICROROS_NAMESPACE
-#define MICROROS_NAMESPACE ""
-#endif
+static const char *TAG = "polyphemus"; // NOMBRE DEL PROYECTO
+#define ROSDOMAIN_ID 0                 // ID del dominio
 
-#ifndef DOMAIN_ID
-#define DOMAIN_ID 0
-#endif
+static const char *volatile estado_actual = "ESPERANDO ORDENES";
 
-// Tamaño del array de entrada: 3 componentes de vector + 3 ángulos.
-// Si más adelante necesitás más datos (ej. un cuarto ángulo, o un segundo vector),
-// solo cambiá este número.
-#define ROTATION_INPUT_SIZE 7
-#define ROTATION_OUTPUT_SIZE 6 // vector resultado ((x, y, z), (x, y, z))
+// IP donde se busca/usa el agente. Con PROMETEO_AGENTE_AUTO se reemplaza por la que responda.
+static char micro_ros_agent_ip_buf[16] = CONFIG_MICRO_ROS_AGENT_IP;
+char * micro_ros_agent_ip = micro_ros_agent_ip_buf;
 
-static const char *TAG = "micro_ros";
+// =========================================================
+// OBJETOS DE MICRO-ROS
+// =========================================================
+static rcl_allocator_t allocator;
+static rcl_init_options_t init_options;
+static rmw_init_options_t *rmw_options;
+static rclc_support_t support;
+static rcl_node_t node;
+static rclc_executor_t executor;
+// ==== pubs, subs y msgs START ====
+/* ejemplo:
+ * static rcl_publisher_t pub;
+ * static rcl_subscription_t sub;
+*/
+// ==== pubs, subs y msgs END   ====
 
-// Publisher: publica el vector ya rotado
-static rcl_publisher_t vector_rotado_pub;
-static std_msgs__msg__Float32MultiArray vector_rotado_msg;
+// ==== timers START ====
+// ejemplo: static rcl_timer_t timer;
+// ==== timers END   ====
 
-// Subscriber: recibe vector + ángulos a aplicar
-static rcl_subscription_t rotation_sub;
-static std_msgs__msg__Float32MultiArray rotation_msg;
+#define RCRET(fn) { rcl_ret_t temp_rc = fn; if (temp_rc != RCL_RET_OK) { \
+    ESP_LOGE(TAG, "Fallo en linea %d: rc=%d", __LINE__, (int)temp_rc); return false; } }
+#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if ((temp_rc != RCL_RET_OK)) { \
+    ESP_LOGW(TAG, "Fallo en linea %d: %d. Continuando.", __LINE__, (int)temp_rc); } }
 
-float pi = acos(-1.0);
+// =========================================================
+// CREAR / DESTRUIR micro-ROS
+// =========================================================
+static bool crear_entidades(void)
+{
+    RCRET(rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator));
+    // Por WiFi cada entidad espera la respuesta del agente: el default (1000 ms) no alcanza
+    rmw_context_t *rmw_context = rcl_context_get_rmw_context(&support.context);
+    (void) rmw_uros_set_context_entity_creation_session_timeout(rmw_context, ENTIDAD_TIMEOUT_MS);
 
-void multiplicar_matriz_vector(float M[3][3], float V[3], float salida[3]) {
-    for (int i = 0; i < 3; i++) {
-        salida[i] = 0.0;
-        for (int j = 0; j < 3; j++) {
-            salida[i] += M[i][j] * V[j];
-        }
-    }
+    // ==== Inicializacion del nodo  ====
+    RCRET(rclc_node_init_default(&node, "body", TAG, &support));
+
+    // ==== Inicializacion de pubs START  ====
+    /* ejemplo:
+     * RCRET(rclc_publisher_init_<qos>(&pub, &node,
+     *     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, <Tipo>), "<nombre>"));
+     */
+
+    // ==== Inicializacion de pubs END    ====
+
+    // ==== Inicializacion de subs START  ====
+    /* ejemplo:
+     * RCRET(rclc_subscription_init_<qos>(&sub, &node,
+           ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, <Tipo>), "<nombre>"));
+     */
+
+    // ==== Inicializacion de subs END    ====
+
+    // ==== Inicializacion de timers START  ====
+    /* ejemplo:
+     * RCRET(rclc_timer_init_default(&timer, &support, RCL_MS_TO_NS(500), timer_callback));
+     */
+
+    // ==== Inicializacion de timers END    ====
+
+    // ==== Inicializacion de executor  ====
+    executor = rclc_executor_get_zero_initialized_executor();
+    RCRET(rclc_executor_init(&executor, &support.context, 7, &allocator));  // 2 timers + 5 suscripciones
+
+    // ==== Agregar al executor START  ====
+    /* ejemplo:
+     * RCRET(rclc_executor_add_timer(&executor, &timer));
+     * RCRET(rclc_executor_add_subscription(&executor, &sub, &msg,
+     *      &callback, ON_NEW_DATA));
+     */
+    // ==== Agregar al executor END    ====
+
+    return true;
 }
 
-/**
- * Se ejecuta automáticamente cada vez que llega un mensaje nuevo al tópico
- * "rotation_input". El middleware ya dejó los datos recibidos escritos
- * dentro de rotation_msg.data.data antes de llamar a esta función.
- */
-void rotation_callback(const void *msgin)
+static void destruir_entidades(void)
 {
-    const std_msgs__msg__Float32MultiArray *msg =
-        (const std_msgs__msg__Float32MultiArray *)msgin;
+    rmw_context_t *rmw_context = rcl_context_get_rmw_context(&support.context);
+    (void) rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
 
-    if (msg->data.size < ROTATION_INPUT_SIZE)
-    {
-        ESP_LOGW(TAG, "Mensaje recibido con tamaño inesperado: %d (esperado %d)",
-                 (int)msg->data.size, ROTATION_INPUT_SIZE);
-        return;
-    }
+    // ==== Limpieza de subs START  ====
+    // ejemplo: RCSOFTCHECK(rcl_subscription_fini(&sub, &node));
 
-    float x = msg->data.data[0];
-    float y = msg->data.data[1];
-    float z = msg->data.data[2];
-    // Vector que queremos rotar
-    float V[3] = {x, y, z};
+    // ==== Limpieza de subs END    ====
 
-    float alfa_deg = msg->data.data[3];
-    float beta_deg = msg->data.data[4];
-    float sigma_deg = msg->data.data[5];
-    int cantidad = (int) msg->data.data[6];
+    // ==== Limpieza de pubs START  ====
+    //ejemplo: RCSOFTCHECK(rcl_publisher_fini(&pub, &node));
 
-    ESP_LOGI(TAG, "Recibido vector: (%.3f, %.3f, %.3f) angulos: (%.3f, %.3f, %.3f) pasos: %d" ,
-             x, y, z, alfa_deg, beta_deg, sigma_deg, cantidad);
+    // ==== Limpieza de pubs END    ====
 
-   // ACA poner codigo de rotacion
+    // ==== Limpieza de timers START  ====
+    // ejemplo: RCSOFTCHECK(rcl_timer_fini(&timer));
 
-   float paso_g = sigma_deg / cantidad; // Paso de microrotación en grados
+    // ==== Limpieza de timers END    ====
 
-   float deg_to_rad = pi/180.0;
-   float alfa = alfa_deg * deg_to_rad;
-   float beta = beta_deg * deg_to_rad;
-   float fi = sigma_deg * deg_to_rad;
-   float paso = paso_g * deg_to_rad;
-
-   // Componentes del eje de rotación
-   float nx = sin(beta) * cos(alfa);
-   float ny = sin(beta) * sin(alfa);
-   float nz = cos(beta);
-   float cosfi = cos(fi);
-   float sinfi = sin(fi);
-
-   // Matriz para rotación total
-   float M1[3][3] = {
-       {
-           nx * nx + (1.0 - nx * nx) * cosfi,
-           nx * ny * (1.0 - cosfi) + nz * sinfi,
-           nx * nz * (1.0 - cosfi) - ny * sinfi
-       },
-       {
-           nx * ny * (1.0 - cosfi) - nz * sinfi,
-           ny * ny + (1.0 - ny * ny) * cosfi,
-           ny * nz * (1.0 - cosfi) + nx * sinfi
-       },
-       {
-           nx * nz * (1.0 - cosfi) + ny * sinfi,
-           ny * nz * (1.0 - cosfi) - nx * sinfi,
-           nz * nz + (1.0 - nz * nz) * cosfi
-       }
-   };
-
-   // Matriz de rotación simplificada MICRO ROTACION
-   float M_micro[3][3] = {
-       {1.0,       nz * paso, -ny * paso},
-       {-nz * paso, 1.0,       nx * paso},
-       {ny * paso, -nx * paso, 1.0}
-   };
-
-   float V_micro[3] = {V[0], V[1], V[2]};
-   float temp[3];
-
-   for (int i = 0; i < cantidad; i++) {
-       multiplicar_matriz_vector(M_micro, V_micro, temp);
-
-       V_micro[0] = temp[0];
-       V_micro[1] = temp[1];
-       V_micro[2] = temp[2];
-   }
-
-   // Rotamos el vector de forma exacta
-   float V_rotado_exacto[3];
-   multiplicar_matriz_vector(M1, V, V_rotado_exacto);
-
-   //
-    vector_rotado_msg.data.data[0] = V_rotado_exacto[0];
-    vector_rotado_msg.data.data[1] = V_rotado_exacto[1];
-    vector_rotado_msg.data.data[2] = V_rotado_exacto[2];
-    vector_rotado_msg.data.data[3] = V_micro[0];
-    vector_rotado_msg.data.data[4] = V_micro[1];
-    vector_rotado_msg.data.data[5] = V_micro[2];
-
-    RCSOFTCHECK(rcl_publish(&vector_rotado_pub, &vector_rotado_msg, NULL));
+    // ==== Limpieza de otros START  ====
+    RCSOFTCHECK(rclc_executor_fini(&executor));
+    RCSOFTCHECK(rcl_node_fini(&node));
+    RCSOFTCHECK(rclc_support_fini(&support));
+    // ==== Limpieza de otros END    ====
 }
 
-/* ── Tarea micro-ROS ────────────────────────────────────────── */
-void micro_ros_task(void *arg)
+// =========================================================
+// TAREA DE MICRO-ROS con reconexión
+// =========================================================
+typedef enum {
+    ESPERANDO_AGENTE,
+    AGENTE_DISPONIBLE,
+    CONECTADO,
+    DESCONECTADO
+} estado_uros_t;
+
+static void micro_ros_task(void * arg)
 {
-    rcl_allocator_t allocator = rcl_get_default_allocator();
-    rclc_support_t support;
-    rcl_ret_t rc;
-    int retry_count = 0;
-    const int MAX_RETRIES = 5;
-    const int RETRY_DELAY_MS = 2000;
+    allocator = rcl_get_default_allocator();
+    init_options = rcl_get_zero_initialized_init_options();
+    RCSOFTCHECK(rcl_init_options_init(&init_options, allocator));
+    RCSOFTCHECK(rcl_init_options_set_domain_id(&init_options, ROSDOMAIN_ID));   // mismo ROS_DOMAIN_ID que el agente y la PC
+    rmw_options = rcl_init_options_get_rmw_init_options(&init_options);
+    rmw_uros_options_set_udp_address(micro_ros_agent_ip, CONFIG_MICRO_ROS_AGENT_PORT, rmw_options);
 
-    ESP_LOGI(TAG, "Waiting for network to stabilize...");
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    // ==== Configuracion de los mensajes START  ====
+    // ==== Configuracion de los mensajes END    ====
 
-    rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
-    rc = rcl_init_options_init(&init_options, allocator);
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to initialize init_options: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
+    estado_uros_t estado = ESPERANDO_AGENTE;
+    int ms_desde_ping = 0;
 
-    rc = rcl_init_options_set_domain_id(&init_options, DOMAIN_ID);
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to set domain id: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
+    while (1) {
+        switch (estado) {
 
-#ifdef CONFIG_MICRO_ROS_ESP_XRCE_DDS_MIDDLEWARE
-    rmw_init_options_t *rmw_options = rcl_init_options_get_rmw_init_options(&init_options);
-    rc = rmw_uros_options_set_udp_address(CONFIG_MICRO_ROS_AGENT_IP,
-                                           CONFIG_MICRO_ROS_AGENT_PORT,
-                                           rmw_options);
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to set UDP address: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "UDP configured: %s:%s", CONFIG_MICRO_ROS_AGENT_IP,
-             CONFIG_MICRO_ROS_AGENT_PORT);
-#endif
+        case ESPERANDO_AGENTE:
+            if (rmw_uros_ping_agent_options(200, 1, rmw_options) == RMW_RET_OK) {
+                ESP_LOGI(TAG, "Agente encontrado");
+                estado = AGENTE_DISPONIBLE;
+            } else {
+                ESP_LOGW(TAG, "Buscando agente por barrida...");
+                if (red_buscar_agente(rmw_options, micro_ros_agent_ip_buf, sizeof(micro_ros_agent_ip_buf))) {
+                    ESP_LOGI(TAG, "Agente encontrado por barrida en %s", micro_ros_agent_ip);
+                    estado = AGENTE_DISPONIBLE;
+                    break;
+                }
+                // la barrida dejó cambiada la dirección: volver a la última conocida
+                rmw_uros_options_set_udp_address(micro_ros_agent_ip, CONFIG_MICRO_ROS_AGENT_PORT, rmw_options);
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
+            break;
 
-    while (retry_count < MAX_RETRIES)
-    {
-        ESP_LOGI(TAG, "Attempting micro-ROS support init (attempt %d/%d)...",
-                 retry_count + 1, MAX_RETRIES);
-        rc = rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
+        case AGENTE_DISPONIBLE:
+            if (crear_entidades()) {
+                ESP_LOGI(TAG, "CONECTADO");
+                estado = CONECTADO;
+                ms_desde_ping = 0;
+            } else {
+                destruir_entidades();
+                estado = ESPERANDO_AGENTE;
+            }
+            break;
 
-        if (rc == RCL_RET_OK)
-        {
-            ESP_LOGI(TAG, "Micro-ROS support initialized successfully");
+        case CONECTADO:
+            if (ms_desde_ping >= PING_PERIODO_MS) {
+                ms_desde_ping = 0;
+                if (rmw_uros_ping_agent(100, 3) != RMW_RET_OK) {
+                    estado = DESCONECTADO;
+                    break;
+                }
+            }
+            rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
+            // ==== Tareas Periodicas START  ====
+            // ==== Tareas Periodicas END    ====
+            vTaskDelay(pdMS_TO_TICKS(10));
+            ms_desde_ping += 20;
+            break;
+
+        case DESCONECTADO:
+            ESP_LOGE(TAG, "Agente PERDIDO -> FRENO y reconexion");
+            // ==== Tareas de Limpieza START  ====
+            // ==== Tareas de Limpieza END    ====
+            destruir_entidades();
+            estado_actual = "ESPERANDO ORDENES";
+            estado = ESPERANDO_AGENTE;
             break;
         }
-        else
-        {
-            ESP_LOGW(TAG, "Failed status on rclc_support_init: %d. %s", rc,
-                     retry_count < MAX_RETRIES - 1 ? "Retrying..." : "Max retries reached. Aborting.");
-
-            if (retry_count < MAX_RETRIES - 1)
-            {
-                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
-                retry_count++;
-            }
-            else
-            {
-                vTaskDelete(NULL);
-                return;
-            }
-        }
     }
-
-    rcl_node_t node = rcl_get_zero_initialized_node();
-    rc = rclc_node_init_default(&node, "microros_node", MICROROS_NAMESPACE, &support);
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init node: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "Node created successfully");
-
-    // buffer para datos recibidos
-    rotation_msg.data.data = (float *)malloc(ROTATION_INPUT_SIZE * sizeof(float));
-    rotation_msg.data.size = 0;
-    rotation_msg.data.capacity = ROTATION_INPUT_SIZE;
-
-    rc = rclc_subscription_init_default(
-        &rotation_sub,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-        "rotation_input");
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init rotation_sub: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "Subscriber initialized");
-
-    //  buffer del mensaje que vamos a publicar
-    vector_rotado_msg.data.data = (float *)malloc(ROTATION_OUTPUT_SIZE * sizeof(float));
-    vector_rotado_msg.data.size = ROTATION_OUTPUT_SIZE;
-    vector_rotado_msg.data.capacity = ROTATION_OUTPUT_SIZE;
-
-    rc = rclc_publisher_init_default(
-        &vector_rotado_pub,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-        "vector_rotado");
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init vector_rotado publisher: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "Publisher initialized");
-
-    rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
-    rc = rclc_executor_init(&executor, &support.context, 1, &allocator);
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init executor: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    rc = rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(1000));
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGW(TAG, "Failed to set executor timeout: %d (continuing)", rc);
-    }
-
-    rc = rclc_executor_add_subscription(
-        &executor,
-        &rotation_sub,
-        &rotation_msg,
-        &rotation_callback,
-        ON_NEW_DATA);
-    if (rc != RCL_RET_OK)
-    {
-        ESP_LOGE(TAG, "Failed to add subscription to executor: %d", rc);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "Executor configured successfully. Starting main loop...");
-
-    while (1)
-    {
-        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
-        usleep(10000);
-    }
-
-    RCCHECK(rcl_subscription_fini(&rotation_sub, &node));
-    RCCHECK(rcl_publisher_fini(&vector_rotado_pub, &node));
-    RCCHECK(rcl_node_fini(&node));
-    vTaskDelete(NULL);
 }
 
 void app_main(void)
 {
-#if defined(CONFIG_MICRO_ROS_ESP_NETIF_WLAN) || defined(CONFIG_MICRO_ROS_ESP_NETIF_ENET)
-    ESP_ERROR_CHECK(uros_network_interface_initialize());
-#endif
-
-    xTaskCreate(micro_ros_task, "micro_ros_task",
-                MICRO_ROS_APP_STACK, NULL, MICRO_ROS_APP_TASK_PRIO, NULL);
+    // INICIALIZACIONES START
+    // INICIALIZACIONES END
+    ESP_ERROR_CHECK(red_wifi_init());
+    xTaskCreate(micro_ros_task, "micro_ros_task", MICRO_ROS_TASK_STACK, NULL, MICRO_ROS_TASK_PRIO, NULL);
 }
