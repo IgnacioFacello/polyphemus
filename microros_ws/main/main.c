@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -22,6 +23,7 @@
 #include <std_msgs/msg/string.h>
 #include <std_msgs/msg/bool.h>
 #include <std_msgs/msg/empty.h>
+#include <sensor_msgs/msg/range.h>
 
 // Stack y prioridad de las tareas
 #define MICRO_ROS_TASK_STACK 16000
@@ -32,6 +34,8 @@
 
 #define ENTIDAD_TIMEOUT_MS 5000   // espera máxima del agente al crear cada entidad
 #define PING_PERIODO_MS 1000  // cada cuánto se chequea que el agente siga vivo
+#define SYNC_PERIODO_MS 30000 // cada cuánto se resincroniza la hora con el agente
+#define SYNC_TIMEOUT_MS 1000  // espera máxima de la sincronización de hora
 
 static const char *TAG = "polyphemus"; // NOMBRE DEL PROYECTO
 #define ROSDOMAIN_ID 0                 // ID del dominio
@@ -56,7 +60,23 @@ static rclc_executor_t executor;
  * static rcl_publisher_t pub;
  * static rcl_subscription_t sub;
 */
+// Un tópico sensor_msgs/Range por sensor: /polyphemus/laser/range y /polyphemus/ultrasonido/range
+static rcl_publisher_t pub_laser;
+static rcl_publisher_t pub_us;
+static sensor_msgs__msg__Range msg_laser;
+static sensor_msgs__msg__Range msg_us;
+static char frame_laser[] = "laser_link";        // memoria estática para el frame_id (sin malloc)
+static char frame_us[]    = "ultrasonido_link";
 // ==== pubs, subs y msgs END   ====
+
+// Última medición de los dos sensores: medicion_task la deja, micro_ros_task la publica.
+// Cola de largo 1 con xQueueOverwrite: siempre queda solo la más nueva.
+typedef struct {
+    int64_t t_us;     // momento de la medición (esp_timer, us desde el arranque)
+    float   us_m;     // ultrasonido en metros (+Inf = sin objeto / fuera de rango, NaN = error)
+    float   laser_m;  // láser en metros (misma convención, REP 117)
+} medicion_t;
+static QueueHandle_t cola_medicion = NULL;
 
 // ==== timers START ====
 // ejemplo: static rcl_timer_t timer;
@@ -85,6 +105,11 @@ static bool crear_entidades(void)
      * RCRET(rclc_publisher_init_<qos>(&pub, &node,
      *     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, <Tipo>), "<nombre>"));
      */
+    // default = reliable: compatible con PlotJuggler y ros2 topic echo
+    RCRET(rclc_publisher_init_default(&pub_laser, &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range), "laser/range"));
+    RCRET(rclc_publisher_init_default(&pub_us, &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range), "ultrasonido/range"));
 
     // ==== Inicializacion de pubs END    ====
 
@@ -130,6 +155,8 @@ static void destruir_entidades(void)
 
     // ==== Limpieza de pubs START  ====
     //ejemplo: RCSOFTCHECK(rcl_publisher_fini(&pub, &node));
+    RCSOFTCHECK(rcl_publisher_fini(&pub_laser, &node));
+    RCSOFTCHECK(rcl_publisher_fini(&pub_us, &node));
 
     // ==== Limpieza de pubs END    ====
 
@@ -155,6 +182,47 @@ typedef enum {
     DESCONECTADO
 } estado_uros_t;
 
+// Completa los campos fijos de un mensaje Range (se llama una sola vez)
+static void configurar_range(sensor_msgs__msg__Range *msg, char *frame, uint8_t tipo,
+                             float fov_rad, float min_m, float max_m)
+{
+    memset(msg, 0, sizeof(*msg));
+    msg->header.frame_id.data     = frame;
+    msg->header.frame_id.size     = strlen(frame);
+    msg->header.frame_id.capacity = strlen(frame) + 1;
+    msg->radiation_type = tipo;
+    msg->field_of_view  = fov_rad;
+    msg->min_range      = min_m;
+    msg->max_range      = max_m;
+}
+
+// Publica la última medición (si hay una nueva) en los dos tópicos
+static void publicar_medicion(void)
+{
+    medicion_t m;
+    if (xQueueReceive(cola_medicion, &m, 0) != pdTRUE) return;   // no hay medición nueva
+
+    // Stamp = hora de la PC en el momento de la medición (no de la publicación).
+    // Sin sincronizar queda en 0 y PlotJuggler usa la hora de recepción.
+    int32_t  sec = 0;
+    uint32_t nsec = 0;
+    if (rmw_uros_epoch_synchronized()) {
+        int64_t ns = rmw_uros_epoch_nanos() - (esp_timer_get_time() - m.t_us) * 1000;
+        sec  = (int32_t)(ns / 1000000000LL);
+        nsec = (uint32_t)(ns % 1000000000LL);
+    }
+
+    msg_laser.header.stamp.sec     = sec;
+    msg_laser.header.stamp.nanosec = nsec;
+    msg_laser.range                = m.laser_m;
+    RCSOFTCHECK(rcl_publish(&pub_laser, &msg_laser, NULL));
+
+    msg_us.header.stamp.sec     = sec;
+    msg_us.header.stamp.nanosec = nsec;
+    msg_us.range                = m.us_m;
+    RCSOFTCHECK(rcl_publish(&pub_us, &msg_us, NULL));
+}
+
 static void micro_ros_task(void * arg)
 {
     allocator = rcl_get_default_allocator();
@@ -165,10 +233,15 @@ static void micro_ros_task(void * arg)
     rmw_uros_options_set_udp_address(micro_ros_agent_ip, CONFIG_MICRO_ROS_AGENT_PORT, rmw_options);
 
     // ==== Configuracion de los mensajes START  ====
+    // Láser VL53L0X: haz de ~25° (0,44 rad), 3 cm a 1,2 m con el perfil por defecto
+    configurar_range(&msg_laser, frame_laser, sensor_msgs__msg__Range__INFRARED,  0.44f, 0.03f, 1.2f);
+    // Ultrasonido HC-SR04: cono de ~15° (0,26 rad), 2 cm a 4 m
+    configurar_range(&msg_us,    frame_us,    sensor_msgs__msg__Range__ULTRASOUND, 0.26f, 0.02f, 4.0f);
     // ==== Configuracion de los mensajes END    ====
 
     estado_uros_t estado = ESPERANDO_AGENTE;
     int ms_desde_ping = 0;
+    int ms_desde_sync = 0;
 
     while (1) {
         switch (estado) {
@@ -195,6 +268,11 @@ static void micro_ros_task(void * arg)
                 ESP_LOGI(TAG, "CONECTADO");
                 estado = CONECTADO;
                 ms_desde_ping = 0;
+                // Sincronizar la hora con el agente, para que los stamps sean la hora de la PC
+                if (rmw_uros_sync_session(SYNC_TIMEOUT_MS) != RMW_RET_OK) {
+                    ESP_LOGW(TAG, "No se pudo sincronizar la hora (stamps en 0)");
+                }
+                ms_desde_sync = 0;
             } else {
                 destruir_entidades();
                 estado = ESPERANDO_AGENTE;
@@ -211,9 +289,15 @@ static void micro_ros_task(void * arg)
             }
             rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
             // ==== Tareas Periodicas START  ====
+            publicar_medicion();
+            if (ms_desde_sync >= SYNC_PERIODO_MS) {   // el reloj del ESP32 deriva: resincronizar
+                ms_desde_sync = 0;
+                (void) rmw_uros_sync_session(SYNC_TIMEOUT_MS);
+            }
             // ==== Tareas Periodicas END    ====
             vTaskDelay(pdMS_TO_TICKS(10));
             ms_desde_ping += 20;
+            ms_desde_sync += 20;
             break;
 
         case DESCONECTADO:
@@ -278,6 +362,17 @@ static void medicion_task(void * arg)
                (long long)(t0 / 1000), us_mm, us_estado_str(us_err), (unsigned long)us_eco_us,
                laser_mm, laser_estado_str(laser_est), (long long)laser_dur_us);
 
+        // Para ROS: pasar a metros con la convención de sensor_msgs/Range (REP 117):
+        // +Inf = no detectó objeto / fuera de rango, NaN = error de medición
+        medicion_t m = { .t_us = t0 };
+        if (laser_est == LASER_OK)               m.laser_m = laser_mm / 1000.0f;
+        else if (laser_est == LASER_SIN_OBJETO)  m.laser_m = INFINITY;
+        else                                     m.laser_m = NAN;
+        if (us_err == ESP_OK)                         m.us_m = us_cm / 100.0f;
+        else if (us_err == ESP_ERR_INVALID_RESPONSE)  m.us_m = INFINITY;
+        else                                          m.us_m = NAN;
+        xQueueOverwrite(cola_medicion, &m);   // micro_ros_task la publica cuando puede
+
         // Periodo fijo: descuenta lo que ya tardó el ciclo (vTaskDelay esperaría 100 ms extra)
         vTaskDelayUntil(&ultimo_ciclo, pdMS_TO_TICKS(MEDICION_PERIODO_MS));
     }
@@ -299,6 +394,8 @@ void app_main(void)
     // Opcional: más tiempo por medición = menos ruido (por defecto ~33 ms).
     // 66 ms deja al láser a la misma tasa que el HC-SR04 (>60 ms entre mediciones).
     // laser_set_budget_us(66000);
+    cola_medicion = xQueueCreate(1, sizeof(medicion_t));   // antes de crear las tareas que la usan
+    configASSERT(cola_medicion);
     // INICIALIZACIONES END
     ESP_ERROR_CHECK(red_wifi_init());
     xTaskCreate(micro_ros_task, "micro_ros_task", MICRO_ROS_TASK_STACK, NULL, MICRO_ROS_TASK_PRIO, NULL);

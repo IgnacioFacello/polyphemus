@@ -51,14 +51,14 @@ menu "Ultrasonido (HC-SR04)"
     config HCSR04_TRIG_PIN
         int "Pin TRIG"
         range 0 33
-        default 4
+        default 18
         help
             Salida del ESP32 hacia TRIG (34-39 son solo entrada). No usar 21/22 (I2C del laser).
 
     config HCSR04_ECHO_PIN
         int "Pin ECHO"
         range 0 39
-        default 34
+        default 5
         help
             Entrada desde ECHO. Con el sensor a 3,3 V va directo. Si se alimenta a 5 V,
             el ECHO sale a 5 V y hace falta divisor resistivo (1k + 2k).
