@@ -30,7 +30,10 @@
 #define MICRO_ROS_TASK_PRIO  5
 #define MEDICION_TASK_STACK  4096
 #define MEDICION_TASK_PRIO   4
-#define MEDICION_PERIODO_MS  100   // 10 Hz. El ciclo real tarda ~50 ms (láser y ultrasonido en paralelo)
+// ==== Configuración de la medición (cambiar acá y reflashear) ====
+// Regla: MEDICION_PERIODO_MS tiene que ser >= LASER_BUDGET_MS + ~15 ms (si no, el ciclo no entra)
+#define LASER_BUDGET_MS      66    // tiempo por medición del láser: más = menos ruido, más lento (20 a 400)
+#define MEDICION_PERIODO_MS  100   // cada cuánto se mide: 100 ms = 10 Hz
 
 #define ENTIDAD_TIMEOUT_MS 5000   // espera máxima del agente al crear cada entidad
 #define PING_PERIODO_MS 1000  // cada cuánto se chequea que el agente siga vivo
@@ -393,7 +396,7 @@ void app_main(void)
     }
     // Opcional: más tiempo por medición = menos ruido (por defecto ~33 ms).
     // 66 ms deja al láser a la misma tasa que el HC-SR04 (>60 ms entre mediciones).
-    // laser_set_budget_us(66000);
+    laser_set_budget_us(LASER_BUDGET_MS * 1000);   // la función recibe microsegundos
     cola_medicion = xQueueCreate(1, sizeof(medicion_t));   // antes de crear las tareas que la usan
     configASSERT(cola_medicion);
     // INICIALIZACIONES END
