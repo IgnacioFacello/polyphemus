@@ -10,6 +10,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"           // vTaskDelay
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "esp_timer.h"               // reloj del ESP32, para no esperar al sensor para siempre
@@ -489,6 +490,7 @@ laser_estado_t laser_medir(uint16_t *mm)
     while ((read_reg(RESULT_INTERRUPT_STATUS) & 0x07) == 0) {
         if (i2c_err != ESP_OK)                  return LASER_ERROR_I2C;
         if (ahora_ms() - t0 > POLL_TIMEOUT_MS)  return LASER_TIMEOUT;
+        vTaskDelay(1);   // ceder la CPU un tick (10 ms con FREERTOS_HZ=100) en vez de preguntar sin parar
     }
 
     // 4) Leer el bloque de resultados de una (12 bytes desde 0x14):

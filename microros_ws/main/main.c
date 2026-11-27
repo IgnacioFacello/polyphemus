@@ -34,6 +34,7 @@
 // Regla: MEDICION_PERIODO_MS tiene que ser >= LASER_BUDGET_MS + ~15 ms (si no, el ciclo no entra)
 #define LASER_BUDGET_MS      66    // tiempo por medición del láser: más = menos ruido, más lento (20 a 400)
 #define MEDICION_PERIODO_MS  100   // cada cuánto se mide: 100 ms = 10 Hz
+#define LASER_MAX_MM         1200  // max_range del láser en ROS (perfil por defecto); más lejos -> +Inf
 
 #define ENTIDAD_TIMEOUT_MS 5000   // espera máxima del agente al crear cada entidad
 #define PING_PERIODO_MS 1000  // cada cuánto se chequea que el agente siga vivo
@@ -237,7 +238,7 @@ static void micro_ros_task(void * arg)
 
     // ==== Configuracion de los mensajes START  ====
     // Láser VL53L0X: haz de ~25° (0,44 rad), 3 cm a 1,2 m con el perfil por defecto
-    configurar_range(&msg_laser, frame_laser, sensor_msgs__msg__Range__INFRARED,  0.44f, 0.03f, 1.2f);
+    configurar_range(&msg_laser, frame_laser, sensor_msgs__msg__Range__INFRARED,  0.44f, 0.03f, LASER_MAX_MM / 1000.0f);
     // Ultrasonido HC-SR04: cono de ~15° (0,26 rad), 2 cm a 4 m
     configurar_range(&msg_us,    frame_us,    sensor_msgs__msg__Range__ULTRASOUND, 0.26f, 0.02f, 4.0f);
     // ==== Configuracion de los mensajes END    ====
@@ -322,6 +323,9 @@ static void micro_ros_task(void * arg)
 // Los dos miden en la misma ventana de tiempo: se dispara el ultrasonido, mientras el sonido
 // va y vuelve (el RMT captura el eco por hardware) se mide con el láser, y después se lee el eco.
 static hcsr04_handle_t ultrasonido = NULL;
+// Qué sensores iniciaron bien: la tarea mide solo esos (el que falló sale como ERROR / NaN)
+static bool laser_listo = false;
+static bool us_listo = false;
 
 static const char *us_estado_str(esp_err_t e)
 {
@@ -345,12 +349,15 @@ static void medicion_task(void * arg)
         int64_t t0 = esp_timer_get_time();
 
         // 1) Disparar el ultrasonido (vuelve enseguida, no espera el eco)
-        esp_err_t us_err = hcsr04_start(ultrasonido);
+        esp_err_t us_err = us_listo ? hcsr04_start(ultrasonido) : ESP_FAIL;
 
-        // 2) Mientras vuela el sonido, medir con el láser (~33 ms)
+        // 2) Mientras vuela el sonido, medir con el láser (~LASER_BUDGET_MS)
         uint16_t laser_mm = 0;
+        laser_estado_t laser_est = LASER_ERROR_I2C;   // si no está listo -> NaN en ROS
         int64_t t_laser = esp_timer_get_time();
-        laser_estado_t laser_est = laser_medir(&laser_mm);
+        if (laser_listo) {
+            laser_est = laser_medir(&laser_mm);
+        }
         int64_t laser_dur_us = esp_timer_get_time() - t_laser;
 
         // 3) Leer el eco del ultrasonido
@@ -368,9 +375,11 @@ static void medicion_task(void * arg)
         // Para ROS: pasar a metros con la convención de sensor_msgs/Range (REP 117):
         // +Inf = no detectó objeto / fuera de rango, NaN = error de medición
         medicion_t m = { .t_us = t0 };
-        if (laser_est == LASER_OK)               m.laser_m = laser_mm / 1000.0f;
-        else if (laser_est == LASER_SIN_OBJETO)  m.laser_m = INFINITY;
-        else                                     m.laser_m = NAN;
+        // Lecturas OK por encima del max_range declarado (LASER_MAX_MM) también son +Inf,
+        // para no publicar valores fuera de [min_range, max_range]. El CSV conserva el valor crudo.
+        if (laser_est == LASER_OK && laser_mm <= LASER_MAX_MM)              m.laser_m = laser_mm / 1000.0f;
+        else if (laser_est == LASER_OK || laser_est == LASER_SIN_OBJETO)   m.laser_m = INFINITY;
+        else                                                               m.laser_m = NAN;
         if (us_err == ESP_OK)                         m.us_m = us_cm / 100.0f;
         else if (us_err == ESP_ERR_INVALID_RESPONSE)  m.us_m = INFINITY;
         else                                          m.us_m = NAN;
@@ -385,24 +394,30 @@ void app_main(void)
 {
     // INICIALIZACIONES START
     // Prender los sensores (una sola vez). Si alguno falla, sigue andando micro-ROS sin medir.
-    bool laser_ok = (laser_init() == ESP_OK);
-    if (!laser_ok) {
+    laser_listo = (laser_init() == ESP_OK);
+    if (!laser_listo) {
         ESP_LOGE(TAG, "No se pudo iniciar el láser");
     }
     hcsr04_config_t us_cfg = HCSR04_CONFIG_DEFAULT();   // pines: menuconfig -> "Ultrasonido (HC-SR04)"
     esp_err_t us_err = hcsr04_new(&us_cfg, &ultrasonido);
-    if (us_err != ESP_OK) {
+    us_listo = (us_err == ESP_OK);
+    if (!us_listo) {
         ESP_LOGE(TAG, "No se pudo iniciar el ultrasonido: %s", esp_err_to_name(us_err));
     }
     // Opcional: más tiempo por medición = menos ruido (por defecto ~33 ms).
     // 66 ms deja al láser a la misma tasa que el HC-SR04 (>60 ms entre mediciones).
-    laser_set_budget_us(LASER_BUDGET_MS * 1000);   // la función recibe microsegundos
+    if (laser_listo) {
+        esp_err_t e = laser_set_budget_us(LASER_BUDGET_MS * 1000);   // la función recibe microsegundos
+        if (e != ESP_OK) {
+            ESP_LOGW(TAG, "No se pudo poner el budget en %d ms: %s", LASER_BUDGET_MS, esp_err_to_name(e));
+        }
+    }
     cola_medicion = xQueueCreate(1, sizeof(medicion_t));   // antes de crear las tareas que la usan
     configASSERT(cola_medicion);
     // INICIALIZACIONES END
     ESP_ERROR_CHECK(red_wifi_init());
     xTaskCreate(micro_ros_task, "micro_ros_task", MICRO_ROS_TASK_STACK, NULL, MICRO_ROS_TASK_PRIO, NULL);
-    if (laser_ok && us_err == ESP_OK) {
+    if (laser_listo || us_listo) {   // con al menos uno andando ya se mide y se publica
         xTaskCreate(medicion_task, "medicion_task", MEDICION_TASK_STACK, NULL, MEDICION_TASK_PRIO, NULL);
     }
 }
